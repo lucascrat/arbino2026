@@ -36,6 +36,7 @@ services:
       - SESSION_FILTER=synthetic
       - POLL_INTERVAL_MS=1000
       - DISPLAY=:99
+      - DATA_DIR=/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3456/api/health"]
       interval: 15s

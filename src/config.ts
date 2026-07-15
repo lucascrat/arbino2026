@@ -45,7 +45,7 @@ export const config = {
   recordCandles: envBool('RECORD_CANDLES', true),
   headless: envBool('HEADLESS', false),
   binomoUrl: 'https://binomo.com/trading',
-  logsDir: path.resolve(root, 'logs'),
+  logsDir: path.resolve(root, envStr('DATA_DIR', 'logs')),
   aiEnabled: envBool('AI_ENABLED', false),
   aiEndpoint: envStr('AI_ENDPOINT', 'https://api.groq.com/openai/v1'),
   aiApiKey: envStr('AI_API_KEY', ''),
