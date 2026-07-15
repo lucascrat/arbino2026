@@ -40,6 +40,17 @@ export class BrowserSession {
 
     await this.ensureLoggedIn();
 
+    // Se ainda estiver em /auth, tenta navegar diretamente para /trading
+    if (this.page.url().includes('/auth')) {
+      log.warn('Ainda na pagina de login. Tentando navegar diretamente para /trading...');
+      await this.page.goto(config.binomoUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+      await this.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+      // Se ainda estiver no login com credenciais, tenta de novo
+      if (this.page.url().includes('/auth') && config.email) {
+        await this.ensureLoggedIn();
+      }
+    }
+
     // Aguarda elemento de trading (seletor de ativo ou gráfico)
     const tradingSelectors = [
       '[data-test="asset_selector"]',
@@ -78,41 +89,78 @@ export class BrowserSession {
   }
 
   private async ensureLoggedIn(): Promise<void> {
-    if (config.email && config.password) {
+    if (!config.email || !config.password) {
+      log.warn('Sem credenciais BINOMO_EMAIL/BINOMO_PASSWORD no ambiente.');
+      return;
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const loginVisible = await this.page
-          .locator('input[type="email"], input[name="email"], input[placeholder*="mail" i]')
-          .first()
-          .isVisible({ timeout: 4000 })
+        // Verifica se ainda está na página de login
+        const currentUrl = this.page.url();
+        const needsLogin = currentUrl.includes('/auth') || currentUrl.includes('/login');
+
+        if (!needsLogin) {
+          // Verifica se há campos de email visíveis (fallback)
+          const emailField = this.page.locator('input[type="email"], input[name="email"]').first();
+          const hasLoginForm = await emailField.isVisible({ timeout: 2000 }).catch(() => false);
+          if (!hasLoginForm) {
+            log.info('Sessão já autenticada.');
+            return;
+          }
+        }
+
+        log.info('Tentativa %d/3: detectada página de login. Autenticando...', attempt);
+        await this.performLogin();
+
+        // Aguarda redirecionamento para /trading
+        const redirected = await this.page
+          .waitForURL('**/trading**', { timeout: 20000 })
+          .then(() => true)
           .catch(() => false);
 
-        if (loginVisible) {
-          log.info('Formulário de login detectado. Autenticando...');
-          await this.performLogin();
-        } else {
-          log.info('Sessão já autenticada (perfil persistente).');
+        if (redirected) {
+          log.info('Login bem-sucedido! Redirecionado para trading.');
+          await this.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+          return;
         }
+
+        log.warn('Tentativa %d: login parece não ter funcionado (URL: %s)', attempt, this.page.url());
       } catch (err) {
-        log.warn('Falha ao verificar login: %s', (err as Error).message);
+        log.warn('Tentativa %d: erro no login: %s', attempt, (err as Error).message);
       }
-    } else {
-      log.warn(
-        'Sem credenciais no .env. Faça login manualmente no navegador aberto. O perfil será salvo.'
-      );
+
+      if (attempt < 3) {
+        await sleep(2000);
+      }
     }
+
+    log.warn('Falha ao autenticar após 3 tentativas. Continuando mesmo assim...');
   }
 
   private async performLogin(): Promise<void> {
-    const emailSel = 'input[type="email"], input[name="email"], input[placeholder*="mail" i]';
-    const passSel = 'input[type="password"], input[name="password"]';
+    const emailSel = 'input[type="email"], input[name="email"], input[placeholder*="mail" i], input[autocomplete="email"], input:not([type="hidden"])[name*="email"]';
+    const passSel = 'input[type="password"], input[name="password"], input[autocomplete="current-password"]';
     const btnSel =
-      'button[type="submit"], button:has-text("Entrar"), button:has-text("Login"), button:has-text("Log in")';
+      'button[type="submit"], button:has-text("Entrar"), button:has-text("Login"), button:has-text("Log in"), button:has-text("Sign in"), button:has-text("Acessar")';
 
-    await this.page.locator(emailSel).first().fill(config.email);
-    await this.page.locator(passSel).first().fill(config.password);
-    await this.page.locator(btnSel).first().click();
-    await this.page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
-    log.info('Login enviado. Aguardando interface de trading...');
+    // Preenche email
+    const emailInput = this.page.locator(emailSel).first();
+    await emailInput.waitFor({ state: 'visible', timeout: 8000 }).catch(() => undefined);
+    await emailInput.fill(config.email);
+    log.info('Email preenchido');
+
+    // Preenche senha
+    const passInput = this.page.locator(passSel).first();
+    await passInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+    await passInput.fill(config.password);
+    log.info('Senha preenchida');
+
+    // Clica no botão de submit
+    const btn = this.page.locator(btnSel).first();
+    await btn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+    await btn.click();
+    log.info('Botão de login clicado. Aguardando redirecionamento...');
   }
 
   async selectAsset(asset: string): Promise<void> {
