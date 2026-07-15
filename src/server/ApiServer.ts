@@ -48,6 +48,8 @@ export interface DiagnosticInfo {
   uptime: number;
   lastTickTime: number | null;
   lastFramePreview: string;
+  pageUrl?: string;
+  pageTitle?: string;
 }
 
 export type BotEvent =

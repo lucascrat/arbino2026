@@ -34,10 +34,29 @@ export class BrowserSession {
 
     log.info('Navegando para %s', config.binomoUrl);
     await this.page.goto(config.binomoUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Aguarda a página estabilizar (sem reload — reload pode perder a sessão WS)
     await this.page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
 
+    log.info('URL apos navegacao: %s | titulo: %s', this.page.url(), await this.page.title());
+
     await this.ensureLoggedIn();
+
+    // Aguarda elemento de trading (seletor de ativo ou gráfico)
+    const tradingSelectors = [
+      '[data-test="asset_selector"]',
+      '[class*="chart"]',
+      '[class*="trading"]',
+      'canvas',
+      '[class*="asset"]',
+    ];
+    for (const sel of tradingSelectors) {
+      const found = await this.page.locator(sel).first().isVisible({ timeout: 5000 }).catch(() => false);
+      if (found) {
+        log.info('Elemento de trading encontrado: %s', sel);
+        break;
+      }
+    }
+
+    log.info('URL final: %s | titulo: %s', this.page.url(), await this.page.title());
     (this as { ready: boolean }).ready = true;
     log.info('Sessão pronta.');
   }
@@ -98,38 +117,56 @@ export class BrowserSession {
 
   async selectAsset(asset: string): Promise<void> {
     try {
+      log.info('Tentando selecionar ativo: %s', asset);
       // Tenta multiplos seletores para abrir o seletor de ativos
       const selectors = [
         '[data-test="asset_selector"]',
         '[class*="asset"][class*="select"]',
         '[class*="asset-picker"]',
         '[class*="header__asset"]',
+        '[class*="header-asset"]',
         'button:has-text("' + asset.split('/')[0] + '")',
+        '[class*="current-asset"]',
+        '[class*="selected-asset"]',
       ];
       let opener = null;
       for (const sel of selectors) {
         const el = this.page.locator(sel).first();
         if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
           opener = el;
+          log.info('Seletor de ativo encontrado: %s', sel);
           break;
         }
       }
       if (!opener) {
-        log.warn('Seletor de ativo não encontrado. O tick stream pode depender de seleção manual.');
+        log.warn('Nenhum seletor de ativo encontrado. O tick stream pode depender de selecao manual.');
+        log.info('URL atual: %s', this.page.url());
         return;
       }
       await opener.click().catch(() => undefined);
-      await sleep(500);
-      // Tenta clicar no asset na lista
-      const assetItem = this.page
-        .locator(`[class*="asset"]:has-text("${asset}")`)
-        .first();
-      if (await assetItem.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await assetItem.click({ timeout: 3000 }).catch(() => undefined);
-        log.info('Ativo selecionado: %s', asset);
-      } else {
-        log.warn('Asset "%s" não encontrado na lista. O tick stream pode não iniciar.', asset);
+      await sleep(800);
+      // Tenta clicar no asset na lista — tenta o nome completo e depois a sigla
+      const assetShort = asset.split('/')[0];
+      const assetLocators = [
+        `[class*="asset"]:has-text("${asset}")`,
+        `text="${asset}"`,
+        `text="${assetShort}"`,
+        `[class*="list"]:has-text("${assetShort}") >> visible=true`,
+      ];
+      let clicked = false;
+      for (const loc of assetLocators) {
+        const item = this.page.locator(loc).first();
+        if (await item.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await item.click({ timeout: 3000 }).catch(() => undefined);
+          log.info('Ativo selecionado via: %s', loc);
+          clicked = true;
+          break;
+        }
       }
+      if (!clicked) {
+        log.warn('Asset "%s" nao encontrado na lista. O tick stream pode nao iniciar.', asset);
+      }
+      await sleep(500);
     } catch (err) {
       log.warn('Erro ao selecionar ativo: %s', (err as Error).message);
     }
@@ -233,6 +270,23 @@ export class BrowserSession {
 
   getPage(): Page {
     return this.page;
+  }
+
+  getPageInfoSync(): { url: string; title: string } {
+    try {
+      const url = this.page.url();
+      return { url, title: '' };
+    } catch {
+      return { url: 'unknown', title: 'unknown' };
+    }
+  }
+
+  async getPageTitle(): Promise<string> {
+    try {
+      return await this.page.title();
+    } catch {
+      return 'unknown';
+    }
   }
 
   async close(): Promise<void> {

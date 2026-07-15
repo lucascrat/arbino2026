@@ -378,6 +378,12 @@ function openDiagnostic() {
       html += '<div class="diag-row"><span class="diag-label">Asset</span><span class="diag-value">' + d.asset + '</span></div>';
       html += '<div class="diag-row"><span class="diag-label">Sessão pronta</span><span class="diag-value ' + (d.sessionReady ? 'ok' : 'err') + '">' + (d.sessionReady ? 'Sim' : 'Não') + '</span></div>';
       html += '<div class="diag-row"><span class="diag-label">Bot uptime</span><span class="diag-value">' + formatUptime(d.uptime) + '</span></div>';
+      if (d.pageUrl) {
+        html += '<div class="diag-row"><span class="diag-label">URL da página</span><span class="diag-value" style="font-size:10px;word-break:break-all">' + escapeHtml(d.pageUrl) + '</span></div>';
+      }
+      if (d.pageTitle) {
+        html += '<div class="diag-row"><span class="diag-label">Título da página</span><span class="diag-value">' + escapeHtml(d.pageTitle) + '</span></div>';
+      }
       if (d.lastFramePreview) {
         html += '<div class="diag-row" style="flex-direction:column;align-items:stretch"><span class="diag-label">Último frame WS:</span><div class="diag-frame">' + escapeHtml(d.lastFramePreview) + '</div></div>';
       }

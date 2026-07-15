@@ -250,6 +250,7 @@ export class BinomoBot {
           }
           // Envia diagnostico do feed
           const rawLog = this.feed.getRawLog();
+          const pageInfo = this.session.getPageInfoSync();
           const diag: DiagnosticInfo = {
             wsFramesReceived: rawLog.filter(f => f.dir === 'in').length,
             wsFramesSent: rawLog.filter(f => f.dir === 'out').length,
@@ -261,6 +262,8 @@ export class BinomoBot {
             uptime: process.uptime(),
             lastTickTime: this.feed.lastTickTime,
             lastFramePreview: rawLog.length > 0 ? rawLog.slice(-1)[0].payload.slice(0, 200) : '',
+            pageUrl: pageInfo.url,
+            pageTitle: pageInfo.title,
           };
           this.api.sendDiagnostic(diag);
         } else if (candleCount > 0 && Date.now() - lastProgressLog > 5000) {
