@@ -30,7 +30,8 @@ export class BinomoBot {
 
   private sendDiag(): void {
     const rawLog = this.feed.getRawLog();
-    const pageInfo = this.session.getPageInfoSync();
+    let pageInfo = { url: 'unknown', title: '' };
+    try { pageInfo = this.session.getPageInfoSync(); } catch { /* session not started */ }
     const diag: DiagnosticInfo = {
       wsFramesReceived: rawLog.filter(f => f.dir === 'in').length,
       wsFramesSent: rawLog.filter(f => f.dir === 'out').length,
@@ -60,9 +61,24 @@ export class BinomoBot {
     // Diagnostico inicial
     this.sendDiag();
 
-    await this.session.start();
+    // Timeout para toda a inicializacao da sessao (2min)
+    await Promise.race([
+      this.session.start(),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT: session.start() excedeu 2 minutos')), 120000)
+      ),
+    ]).catch(async (err) => {
+      log.error('Falha ao iniciar sessao: %s', err.message);
+      try {
+        const info = this.session.getPageInfoSync();
+        log.info('URL da pagina: %s | titulo: %s', info.url, info.title);
+        const html = await this.session.getPage().content().catch(() => '');
+        const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 2000);
+        log.info('Texto visivel da pagina: %s', bodyText);
+      } catch { /* ignore */ }
+    });
 
-    // Diagnostico apos abrir sessao
+    // Diagnostico apos abrir sessao (mesmo se falhou)
     this.sendDiag();
 
     await this.session.selectAsset(config.asset);

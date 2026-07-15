@@ -322,10 +322,11 @@ export class BrowserSession {
 
   getPageInfoSync(): { url: string; title: string } {
     try {
+      if (!this.page) return { url: 'no-page', title: '' };
       const url = this.page.url();
       return { url, title: '' };
     } catch {
-      return { url: 'unknown', title: 'unknown' };
+      return { url: 'error', title: 'unknown' };
     }
   }
 
