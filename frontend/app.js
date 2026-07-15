@@ -400,6 +400,42 @@ function closeDiagnostic() {
   document.getElementById('diagModal').style.display = 'none';
 }
 
+async function setupLogin() {
+  const btn = document.getElementById('btnSetupLogin');
+  btn.disabled = true;
+  btn.textContent = 'Abrindo navegador...';
+  try {
+    const res = await fetch('/api/setup/login', { method: 'POST' });
+    const data = await res.json();
+    addLog('info', data.message || 'Setup iniciado');
+    if (data.ok) {
+      // Abre VNC automaticamente
+      window.open('/vnc.html', '_blank');
+      btn.textContent = '🔑 Setup Ativo';
+      btn.onclick = stopSetupLogin;
+    } else {
+      btn.disabled = false;
+      btn.textContent = '🔑 Setup Login';
+    }
+  } catch (err) {
+    addLog('error', 'Erro ao iniciar setup: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '🔑 Setup Login';
+  }
+}
+
+async function stopSetupLogin() {
+  const btn = document.getElementById('btnSetupLogin');
+  btn.textContent = 'Fechando...';
+  try {
+    await fetch('/api/setup/stop', { method: 'POST' });
+    addLog('info', 'Setup encerrado');
+  } catch {}
+  btn.textContent = '🔑 Setup Login';
+  btn.onclick = setupLogin;
+  btn.disabled = false;
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.appendChild(document.createTextNode(str));

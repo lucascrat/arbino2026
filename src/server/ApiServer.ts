@@ -75,6 +75,7 @@ export class ApiServer {
   private botRunning = false;
   private state: BotState;
   private lastDiagnostic: DiagnosticInfo | null = null;
+  private setupProcess: ChildProcess | null = null;
 
   constructor(port = 3456, db?: AppDatabase) {
     this.port = port;
@@ -271,6 +272,57 @@ export class ApiServer {
       this.emitEvent({ type: 'state', state: this.getState() });
       log.info('Bot iniciado externamente (IPC/Electron)');
       res.json({ ok: true });
+    });
+
+    // Setup: lanca Chromium visivel no VNC para login manual
+    this.app.post('/api/setup/login', (_req, res) => {
+      if (this.setupProcess) {
+        res.json({ ok: false, message: 'Setup ja em andamento' });
+        return;
+      }
+      const distDir = path.resolve(projectRoot, 'dist');
+      const setupScript = path.join(distDir, 'server', 'setup-login.js');
+      // Usa o mesmo entry point com flag especial
+      const nodeExe = process.execPath;
+      const indexJs = path.join(projectRoot, 'dist', 'index.js');
+      this.setupProcess = spawn(nodeExe, [indexJs, '--mode=setup-login'], {
+        cwd: projectRoot,
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          HEADLESS: 'false',
+          MODE: 'setup-login',
+          SETUP_MODE: 'true',
+        },
+      });
+      this.setupProcess.stdout?.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) log.info('[SETUP] %s', msg);
+      });
+      this.setupProcess.stderr?.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) log.error('[SETUP ERR] %s', msg);
+      });
+      this.setupProcess.on('exit', () => {
+        this.setupProcess = null;
+        log.info('Setup encerrado');
+      });
+      log.info('Setup login iniciado (HEADLESS=false)');
+      res.json({ ok: true, message: 'Navegador aberto para login. Use o VNC para acessar.' });
+    });
+
+    this.app.post('/api/setup/stop', (_req, res) => {
+      if (this.setupProcess) {
+        this.setupProcess.kill('SIGINT');
+        this.setupProcess = null;
+        res.json({ ok: true });
+      } else {
+        res.json({ ok: false, message: 'Nenhum setup em andamento' });
+      }
+    });
+
+    this.app.get('/api/setup/status', (_req, res) => {
+      res.json({ running: this.setupProcess !== null });
     });
 
     this.app.get('/api/bot/status', (_req, res) => {
