@@ -136,9 +136,9 @@ export class ApiServer {
     });
     this.app.use(express.static(frontendDir));
 
-    // Serve noVNC core modules
+    // Serve noVNC core modules (via /novnc/ alias)
     const novncDir = path.resolve(projectRoot, 'node_modules', '@novnc', 'novnc', 'core');
-    this.app.use('/node_modules/@novnc/novnc/core', express.static(novncDir));
+    this.app.use('/novnc', express.static(novncDir));
 
     // ===== API =====
     this.app.get('/api/health', (_req, res) => {
