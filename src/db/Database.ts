@@ -363,6 +363,18 @@ export class AppDatabase {
     };
   }
 
+  getSystemInfo(): { tradeCount: number; candleCount: number; dbSizeBytes: number; sessionCount: number } {
+    const tradeCount = (this.db.prepare('SELECT COUNT(*) as c FROM trades').get() as { c: number }).c;
+    const candleCount = (this.db.prepare('SELECT COUNT(*) as c FROM candles').get() as { c: number }).c;
+    const sessionCount = (this.db.prepare('SELECT COUNT(DISTINCT session_id) as c FROM trades').get() as { c: number }).c;
+    let dbSizeBytes = 0;
+    try {
+      const dbPath = this.db.name;
+      dbSizeBytes = fs.statSync(dbPath).size;
+    } catch { /* ignore */ }
+    return { tradeCount, candleCount, dbSizeBytes, sessionCount };
+  }
+
   close(): void {
     this.db.close();
     log.info('Banco fechado.');

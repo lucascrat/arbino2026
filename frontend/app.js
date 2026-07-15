@@ -28,6 +28,13 @@ if (window.electronAPI) {
 socket.on('connect', () => {
   console.log('Conectado ao backend');
   addLog('info', 'Dashboard conectado ao backend');
+  const el = document.getElementById('sysSocket');
+  if (el) { el.className = 'sys-item sys-socket connected'; el.innerHTML = '🔌 Conectado'; }
+});
+
+socket.on('disconnect', () => {
+  const el = document.getElementById('sysSocket');
+  if (el) { el.className = 'sys-item sys-socket disconnected'; el.innerHTML = '🔌 Desconectado'; }
 });
 
 socket.on('log', (data) => {
@@ -437,6 +444,34 @@ function updateChart(candle) {
   candleChart.update('none');
 }
 
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${Math.floor(seconds % 60)}s`;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / 1048576).toFixed(1) + 'MB';
+}
+
+async function fetchSystemStatus() {
+  try {
+    const res = await fetch('/api/system');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      document.getElementById('sysUptime').textContent = '⏱️ ' + formatUptime(data.uptime);
+      document.getElementById('sysTrades').textContent = '📊 ' + data.db.tradeCount + ' trades';
+    }
+  } catch (err) {
+    console.error('Erro ao buscar system status:', err);
+  }
+}
+
 // ===== Init =====
 window.addEventListener('DOMContentLoaded', () => {
   initChart();
@@ -444,8 +479,10 @@ window.addEventListener('DOMContentLoaded', () => {
   loadTrades();
   fetchState();
   loadAnalytics();
+  fetchSystemStatus();
   setInterval(refreshStats, 10000);
   setInterval(fetchState, 5000);
+  setInterval(fetchSystemStatus, 15000);
 });
 
 async function fetchState() {

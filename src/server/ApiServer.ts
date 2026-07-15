@@ -120,6 +120,19 @@ export class ApiServer {
       res.json({ status: 'ok', uptime: process.uptime() });
     });
 
+    this.app.get('/api/system', (_req, res) => {
+      const mem = process.memoryUsage();
+      const dbInfo = this.db.getSystemInfo();
+      res.json({
+        status: 'ok',
+        uptime: process.uptime(),
+        memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
+        platform: process.platform,
+        nodeVersion: process.version,
+        db: dbInfo,
+      });
+    });
+
     this.app.get('/api/stats', (_req, res) => {
       const overall = this.db.getOverallStats();
       const sessions = this.db.getSessions(30);

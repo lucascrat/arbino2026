@@ -251,7 +251,6 @@ export class BinomoBot {
         } else if (candleCount > 0 && Date.now() - lastProgressLog > 5000) {
           this.api.sendWarmup(candleCount, 30);
         }
-        }
         continue;
       }
       warmupMsg = false;
