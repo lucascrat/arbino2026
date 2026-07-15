@@ -44,7 +44,8 @@ export type BotEvent =
   | { type: 'trade'; trade: unknown }
   | { type: 'result'; trade: unknown }
   | { type: 'balance'; balance: number; currency: string }
-  | { type: 'state'; state: BotState };
+  | { type: 'state'; state: BotState }
+  | { type: 'warmup'; candles: number; target: number };
 
 export class ApiServer {
   private app = express();
@@ -382,6 +383,9 @@ export class ApiServer {
         break;
       case 'state':
         this.io.emit('state', event.state);
+        break;
+      case 'warmup':
+        this.io.emit('warmup', event);
         break;
     }
   }

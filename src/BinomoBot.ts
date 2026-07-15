@@ -240,13 +240,17 @@ export class BinomoBot {
           log.warn('Ainda sem candles suficientes (%d). Verifique se o feed está capturando.', candleCount);
           warmupMsg = true;
           lastProgressLog = Date.now();
+          this.api.sendWarmup(0, 30);
         } else if (Date.now() - lastProgressLog > 30000) {
           log.info('Aguardando candles... (%d/30)', candleCount);
           lastProgressLog = Date.now();
-          // Diagnostico: se nenhum candle foi recebido, sugere acao
+          this.api.sendWarmup(candleCount, 30);
           if (candleCount === 0) {
             log.warn('Nenhum candle ainda. Verifique se o navegador esta logado no Binomo e na pagina de trading.');
           }
+        } else if (candleCount > 0 && Date.now() - lastProgressLog > 5000) {
+          this.api.sendWarmup(candleCount, 30);
+        }
         }
         continue;
       }

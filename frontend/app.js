@@ -62,6 +62,23 @@ socket.on('balance', (data) => {
   document.getElementById('balanceValue').textContent = `R$ ${data.balance.toFixed(2)}`;
 });
 
+socket.on('warmup', (data) => {
+  const bar = document.getElementById('warmupBar');
+  const fill = document.getElementById('warmupFill');
+  const count = document.getElementById('warmupCount');
+  if (!bar || !fill || !count) return;
+  if (data.candles >= data.target) {
+    bar.style.display = 'none';
+    document.getElementById('statusText').textContent = 'Rodando';
+    return;
+  }
+  bar.style.display = 'flex';
+  document.getElementById('statusText').textContent = 'Analisando...';
+  const pct = Math.min(100, Math.round((data.candles / data.target) * 100));
+  fill.style.width = pct + '%';
+  count.textContent = `${data.candles}/${data.target} candles`;
+});
+
 // ===== Bot Control =====
 async function startBot() {
   // Se estiver no Electron, usa IPC
@@ -128,12 +145,14 @@ async function stopBot() {
 function updateStatusBadge(running) {
   const badge = document.getElementById('statusBadge');
   const text = document.getElementById('statusText');
+  const bar = document.getElementById('warmupBar');
   if (running) {
     badge.classList.add('running');
     text.textContent = 'Rodando';
   } else {
     badge.classList.remove('running');
     text.textContent = 'Parado';
+    if (bar) bar.style.display = 'none';
   }
 }
 

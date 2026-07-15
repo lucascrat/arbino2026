@@ -53,6 +53,25 @@ body {
 .status-badge.running { background: rgba(34,197,94,0.15); color: var(--green); }
 .status-badge.running .status-dot { background: var(--green); animation: pulse 1.5s infinite; }
 
+.warmup-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 12px; border-radius: 20px;
+  background: rgba(251,191,36,0.12); font-size: 12px;
+  margin-left: 8px;
+}
+.warmup-label { color: var(--orange); font-weight: 600; white-space: nowrap; }
+.warmup-track {
+  flex: 1; height: 6px; border-radius: 3px;
+  background: rgba(251,191,36,0.2); min-width: 80px;
+  overflow: hidden;
+}
+.warmup-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--orange), var(--green));
+  transition: width 0.5s ease;
+}
+.warmup-count { color: var(--text-muted); white-space: nowrap; font-size: 11px; }
+
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 
 .balance-display { display: flex; flex-direction: column; align-items: flex-end; }

@@ -69,4 +69,8 @@ export class BotApiClient {
   sendBalance(balance: number, currency: string): void {
     void this.sendEvent({ type: 'balance', balance, currency });
   }
+
+  sendWarmup(candles: number, target: number): void {
+    void this.sendEvent({ type: 'warmup', candles, target });
+  }
 }
