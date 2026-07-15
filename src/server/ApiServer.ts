@@ -467,6 +467,31 @@ export class ApiServer {
       res.json({ logs: [] });
     });
 
+    // Lista janelas abertas no display (para debug)
+    this.app.get('/api/vnc/windows', (_req, res) => {
+      const { execSync } = require('node:child_process');
+      try {
+        const w = execSync('xdotool search . 2>/dev/null || true', { encoding: 'utf8' }).trim();
+        if (!w) {
+          res.json({ windows: [], message: 'Nenhuma janela encontrada' });
+          return;
+        }
+        const ids = w.split('\n').filter(Boolean);
+        const windows = ids.map((id: string) => {
+          try {
+            const name = execSync(`xdotool getwindowname ${id} 2>/dev/null`, { encoding: 'utf8' }).trim();
+            const geo = execSync(`xdotool getwindowgeometry ${id} 2>/dev/null`, { encoding: 'utf8' }).trim();
+            return { id, name, geometry: geo };
+          } catch {
+            return { id, name: '?', geometry: '?' };
+          }
+        });
+        res.json({ count: windows.length, windows });
+      } catch {
+        res.json({ windows: [], message: 'xdotool nao disponivel ou display offline' });
+      }
+    });
+
     // SPA fallback — serve index.html para rotas não-API
     this.app.use((_req, res) => {
       res.sendFile(path.join(frontendDir, 'index.html'));
