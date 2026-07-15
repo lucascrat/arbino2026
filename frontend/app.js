@@ -80,7 +80,11 @@ socket.on('warmup', (data) => {
     return;
   }
   bar.style.display = 'flex';
-  document.getElementById('statusText').textContent = 'Analisando...';
+  if (data.candles === 0 && document.getElementById('vncHint')?.classList.contains('hint-visible')) {
+    document.getElementById('statusText').textContent = 'Aguardando login via VNC...';
+  } else {
+    document.getElementById('statusText').textContent = 'Analisando...';
+  }
   const pct = Math.min(100, Math.round((data.candles / data.target) * 100));
   fill.style.width = pct + '%';
   count.textContent = `${data.candles}/${data.target} candles`;
@@ -88,7 +92,6 @@ socket.on('warmup', (data) => {
 
 // ===== Bot Control =====
 async function startBot() {
-  // Se estiver no Electron, usa IPC
   if (window.electronAPI?.startBot) {
     const res = await window.electronAPI.startBot('trade');
     if (res.ok) {
@@ -103,6 +106,9 @@ async function startBot() {
     return;
   }
   try {
+    const hint = document.getElementById('vncHint');
+    if (hint) hint.classList.add('hint-visible');
+
     const res = await fetch('/api/bot/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -114,6 +120,8 @@ async function startBot() {
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStop').disabled = false;
       updateStatusBadge(true);
+      addLog('info', 'Navegador aberto no VNC. Faca login manual no Binomo pela janela do VNC.');
+      window.open('/vnc.html', '_blank');
     }
   } catch (err) {
     addLog('error', 'Erro ao iniciar bot: ' + err.message);

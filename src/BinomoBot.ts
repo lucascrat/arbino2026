@@ -61,22 +61,40 @@ export class BinomoBot {
     // Diagnostico inicial
     this.sendDiag();
 
-    // Timeout para toda a inicializacao da sessao (2min)
-    await Promise.race([
-      this.session.start(),
-      new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('TIMEOUT: session.start() excedeu 2 minutos')), 120000)
-      ),
-    ]).catch(async (err) => {
-      log.error('Falha ao iniciar sessao: %s', err.message);
-      try {
-        const info = this.session.getPageInfoSync();
-        log.info('URL da pagina: %s | titulo: %s', info.url, info.title);
-        const html = await this.session.getPage().content().catch(() => '');
-        const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 2000);
-        log.info('Texto visivel da pagina: %s', bodyText);
-      } catch { /* ignore */ }
-    });
+    const hasCredentials = !!(config.email && config.password);
+    const manualLogin = !hasCredentials;
+
+    if (manualLogin) {
+      log.info('Sem credenciais BINOMO_EMAIL/BINOMO_PASSWORD. Modo manual: aguardando login via VNC...');
+      await this.session.start(true);
+      this.sendDiag();
+
+      log.info('Aguardando login manual (URL: %s)', this.session.getPageInfoSync().url);
+      this.api.sendWarmup(0, 30);
+
+      const loggedIn = await this.session.waitForManualLogin(300000);
+      if (!loggedIn) {
+        log.warn('Login manual nao detectado apos 5min. Continuando mesmo assim...');
+      } else {
+        log.info('Login manual OK! Prosseguindo...');
+      }
+    } else {
+      await Promise.race([
+        this.session.start(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('TIMEOUT: session.start() excedeu 2 minutos')), 120000)
+        ),
+      ]).catch(async (err) => {
+        log.error('Falha ao iniciar sessao: %s', err.message);
+        try {
+          const info = this.session.getPageInfoSync();
+          log.info('URL da pagina: %s | titulo: %s', info.url, info.title);
+          const html = await this.session.getPage().content().catch(() => '');
+          const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 2000);
+          log.info('Texto visivel da pagina: %s', bodyText);
+        } catch { /* ignore */ }
+      });
+    }
 
     // Diagnostico apos abrir sessao (mesmo se falhou)
     this.sendDiag();

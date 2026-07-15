@@ -18,7 +18,7 @@ export class BrowserSession {
     this.feed = feed;
   }
 
-  async start(): Promise<void> {
+  async start(waitForManual = false): Promise<void> {
     log.info('Abrindo Chromium (perfil persistente em %s)', config.userDataDir);
     this.ctx = await chromium.launchPersistentContext(config.userDataDir, {
       headless: config.headless,
@@ -38,6 +38,11 @@ export class BrowserSession {
 
     log.info('URL apos navegacao: %s | titulo: %s', this.page.url(), await this.page.title());
 
+    if (waitForManual) {
+      log.info('Modo manual: aguardando usuario fazer login via VNC...');
+      return;
+    }
+
     await this.ensureLoggedIn();
 
     // Se ainda estiver em /auth, tenta navegar diretamente para /trading
@@ -45,7 +50,6 @@ export class BrowserSession {
       log.warn('Ainda na pagina de login. Tentando navegar diretamente para /trading...');
       await this.page.goto(config.binomoUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
       await this.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
-      // Se ainda estiver no login com credenciais, tenta de novo
       if (this.page.url().includes('/auth') && config.email) {
         await this.ensureLoggedIn();
       }
@@ -70,6 +74,26 @@ export class BrowserSession {
     log.info('URL final: %s | titulo: %s', this.page.url(), await this.page.title());
     (this as { ready: boolean }).ready = true;
     log.info('Sessão pronta.');
+  }
+
+  async waitForManualLogin(timeoutMs = 300000): Promise<boolean> {
+    log.info('Aguardando login manual (URL conter /trading)...');
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const url = this.page.url();
+        if (url.includes('/trading')) {
+          log.info('Login manual detectado! URL: %s', url);
+          (this as { ready: boolean }).ready = true;
+          return true;
+        }
+      } catch {
+        // pagina pode estar carregando
+      }
+      await sleep(2000);
+    }
+    log.warn('Timeout aguardando login manual (%dms)', timeoutMs);
+    return false;
   }
 
   private attachWebsocketInterceptor(): void {

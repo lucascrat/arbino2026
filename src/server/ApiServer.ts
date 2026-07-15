@@ -226,7 +226,7 @@ export class ApiServer {
       this.botProcess = spawn(nodeExe, [indexJs, `--mode=${mode}`], {
         cwd: projectRoot,
         stdio: 'pipe',
-        env: { ...process.env },
+        env: { ...process.env, HEADLESS: 'false' },
       });
 
       this.botProcess.stdout?.on('data', (data: Buffer) => {

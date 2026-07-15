@@ -73,6 +73,15 @@ body {
 }
 .warmup-count { color: var(--text-muted); white-space: nowrap; font-size: 11px; }
 
+.vnc-hint {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 20px;
+  background: rgba(59,130,246,0.12); font-size: 12px;
+  margin-left: 8px; white-space: nowrap;
+}
+.vnc-hint a { color: var(--blue); text-decoration: underline; }
+.vnc-hint.hint-visible { display: flex !important; }
+
 /* System Status */
 .system-status {
   display: flex; align-items: center; gap: 12px;
