@@ -28,6 +28,26 @@ export class BinomoBot {
   private lastSignalTime = 0;
   private csvPath = path.join(config.logsDir, 'candles.csv');
 
+  private sendDiag(): void {
+    const rawLog = this.feed.getRawLog();
+    const pageInfo = this.session.getPageInfoSync();
+    const diag: DiagnosticInfo = {
+      wsFramesReceived: rawLog.filter(f => f.dir === 'in').length,
+      wsFramesSent: rawLog.filter(f => f.dir === 'out').length,
+      candleCount: this.feed.getCandles().length,
+      socketCount: this.feed.socketCount,
+      lastPrice: this.feed.lastPrice,
+      asset: config.asset,
+      sessionReady: this.session.ready,
+      uptime: process.uptime(),
+      lastTickTime: this.feed.lastTickTime,
+      lastFramePreview: rawLog.length > 0 ? rawLog.slice(-1)[0].payload.slice(0, 200) : '',
+      pageUrl: pageInfo.url,
+      pageTitle: pageInfo.title,
+    };
+    this.api.sendDiagnostic(diag);
+  }
+
   async run(mode: RunMode = config.mode): Promise<void> {
     log.info('Iniciando bot no modo: %s | TF candle=%ds | exp=%ds | asset=%s', mode, config.candleTimeframeSeconds, config.expirationSeconds, config.asset);
     log.info('IA: %s | Score min: %d | Entrada: R$ %s | Gale: %d niveis (%sx)', config.aiEnabled ? 'ATIVA' : 'OFF', config.minSignalScore, config.entryValue.toFixed(2), config.martingaleLevels, config.martingaleMultiplier);
@@ -37,7 +57,14 @@ export class BinomoBot {
       return;
     }
 
+    // Diagnostico inicial
+    this.sendDiag();
+
     await this.session.start();
+
+    // Diagnostico apos abrir sessao
+    this.sendDiag();
+
     await this.session.selectAsset(config.asset);
     this.trader = new Trader(this.session.getPage());
 
@@ -248,26 +275,13 @@ export class BinomoBot {
           if (candleCount === 0) {
             log.warn('Nenhum candle ainda. Verifique se o navegador esta logado no Binomo e na pagina de trading.');
           }
-          // Envia diagnostico do feed
-          const rawLog = this.feed.getRawLog();
-          const pageInfo = this.session.getPageInfoSync();
-          const diag: DiagnosticInfo = {
-            wsFramesReceived: rawLog.filter(f => f.dir === 'in').length,
-            wsFramesSent: rawLog.filter(f => f.dir === 'out').length,
-            candleCount,
-            socketCount: this.feed.socketCount,
-            lastPrice: this.feed.lastPrice,
-            asset: config.asset,
-            sessionReady: this.session.ready,
-            uptime: process.uptime(),
-            lastTickTime: this.feed.lastTickTime,
-            lastFramePreview: rawLog.length > 0 ? rawLog.slice(-1)[0].payload.slice(0, 200) : '',
-            pageUrl: pageInfo.url,
-            pageTitle: pageInfo.title,
-          };
-          this.api.sendDiagnostic(diag);
+          this.sendDiag();
         } else if (candleCount > 0 && Date.now() - lastProgressLog > 5000) {
           this.api.sendWarmup(candleCount, 30);
+        }
+        // Envia diagnostico a cada ~5s no warmup
+        if (candleCount < 30 && Date.now() - lastProgressLog > 5000) {
+          this.sendDiag();
         }
         continue;
       }
