@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arbinomo — Bot de Trading</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">📈</span>
+          <span class="logo-text">Arbinomo</span>
+        </div>
+        <div class="status-badge" id="statusBadge">
+          <span class="status-dot"></span>
+          <span id="statusText">Parado</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="balance-display">
+          <span class="balance-label">Saldo Demo</span>
+          <span class="balance-value" id="balanceValue">—</span>
+        </div>
+        <button class="btn btn-success" id="btnStart" onclick="startBot()">Iniciar</button>
+        <button class="btn btn-danger" id="btnStop" onclick="stopBot()" disabled>Parar</button>
+      </div>
+    </header>
+
+    <!-- Stats Cards -->
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon green">🎯</div>
+        <div class="stat-info">
+          <div class="stat-label">Win Rate</div>
+          <div class="stat-value" id="statWinRate">0%</div>
+          <div class="stat-sub" id="statWinLoss">0W / 0L</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon blue">💰</div>
+        <div class="stat-info">
+          <div class="stat-label">Lucro Líquido</div>
+          <div class="stat-value" id="statProfit">R$ 0,00</div>
+          <div class="stat-sub" id="statTotalTrades">0 trades</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon orange">📊</div>
+        <div class="stat-info">
+          <div class="stat-label">Trades Hoje</div>
+          <div class="stat-value" id="statTradesToday">0</div>
+          <div class="stat-sub" id="statLossesToday">Perdas: R$ 0,00</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon red">⚡</div>
+        <div class="stat-info">
+          <div class="stat-label">Perdas Consec.</div>
+          <div class="stat-value" id="statConsecLosses">0</div>
+          <div class="stat-sub" id="statGaleInfo">Gale: 5 níveis</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon purple">🤖</div>
+        <div class="stat-info">
+          <div class="stat-label">IA (Filtro)</div>
+          <div class="stat-value" id="statAiStatus">—</div>
+          <div class="stat-sub" id="statAiModel">—</div>
+        </div>
+        <button class="btn btn-sm btn-ghost" id="btnToggleAi" onclick="toggleAi()">On/Off</button>
+      </div>
+    </section>
+
+    <!-- Main Content -->
+    <div class="main-grid">
+      <!-- Left: Chart + Trades -->
+      <div class="left-panel">
+        <!-- Candle Chart -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Gráfico de Candles — <span id="chartAsset">Z-CRY/IDX</span></h3>
+            <span class="card-sub" id="chartTf">TF: 15s</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="candleChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Trade History -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Histórico de Trades</h3>
+            <span class="card-sub" id="tradeCount">0 trades</span>
+          </div>
+          <div class="trade-table-wrap">
+            <table class="trade-table" id="tradeTable">
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Dir</th>
+                  <th>Valor</th>
+                  <th>Score</th>
+                  <th>Gale</th>
+                  <th>IA</th>
+                  <th>Resultado</th>
+                  <th>Payout</th>
+                </tr>
+              </thead>
+              <tbody id="tradeBody">
+                <tr class="empty-row"><td colspan="8">Nenhum trade ainda</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Controls + Logs -->
+      <div class="right-panel">
+        <!-- Config Panel -->
+        <div class="card">
+          <div class="card-header"><h3>⚙️ Configurações</h3></div>
+          <div class="config-grid">
+            <div class="config-item">
+              <label>Ativo</label>
+              <input type="text" id="cfgAsset" value="Z-CRY/IDX" />
+            </div>
+            <div class="config-item">
+              <label>Entrada (R$)</label>
+              <input type="number" id="cfgEntry" value="5" step="0.5" />
+            </div>
+            <div class="config-item">
+              <label>Score mínimo</label>
+              <input type="number" id="cfgScore" value="80" min="50" max="100" />
+            </div>
+            <div class="config-item">
+              <label>Expiração (s)</label>
+              <input type="number" id="cfgExp" value="60" />
+            </div>
+            <div class="config-item">
+              <label>TF Candle (s)</label>
+              <input type="number" id="cfgTf" value="15" />
+            </div>
+            <div class="config-item">
+              <label>Gale níveis</label>
+              <input type="number" id="cfgGale" value="5" min="0" max="10" />
+            </div>
+            <div class="config-item">
+              <label>Gale fator</label>
+              <input type="number" id="cfgGaleMult" value="2.3" step="0.1" />
+            </div>
+            <div class="config-item">
+              <label>Cooldown (s)</label>
+              <input type="number" id="cfgCooldown" value="15" />
+            </div>
+            <div class="config-item">
+              <label>Take Profit (R$) <span class="hint">0=off</span></label>
+              <input type="number" id="cfgProfit" value="0" step="5" min="0" />
+            </div>
+            <div class="config-item">
+              <label>Max trades/dia</label>
+              <input type="number" id="cfgMaxTrades" value="20" min="1" />
+            </div>
+            <div class="config-item">
+              <label>Stop-loss (R$) <span class="hint">0=off</span></label>
+              <input type="number" id="cfgStopLoss" value="100" step="10" min="0" />
+            </div>
+          </div>
+          <div class="config-actions">
+            <button class="btn btn-primary btn-sm" onclick="saveSettings()">Salvar</button>
+            <span class="config-saved" id="cfgSaved"></span>
+          </div>
+        </div>
+
+        <!-- Last Signal -->
+        <div class="card signal-card" id="signalCard">
+          <div class="card-header"><h3>🔔 Último Sinal</h3></div>
+          <div id="signalContent" class="signal-content">
+            <p class="muted">Aguardando sinal...</p>
+          </div>
+        </div>
+
+        <!-- Live Logs -->
+        <div class="card log-card">
+          <div class="card-header">
+            <h3>📜 Logs em Tempo Real</h3>
+            <button class="btn btn-sm btn-ghost" onclick="clearLogs()">Limpar</button>
+          </div>
+          <div class="log-container" id="logContainer">
+            <div class="log-empty">Logs aparecerão aqui...</div>
+          </div>
+        </div>
+
+        <!-- Analytics Panel -->
+        <div class="card analytics-card">
+          <div class="card-header">
+            <h3>📊 Painel Analítico</h3>
+            <button class="btn btn-sm btn-ghost" onclick="loadAnalytics()">↻</button>
+          </div>
+          <div id="analyticsContent" class="analytics-content">
+            <div class="analytics-grid" id="analyticsGrid">
+              <!-- Gale Stats -->
+              <div class="analytics-section">
+                <div class="analytics-title">🎲 Gales</div>
+                <div class="analytics-body" id="analyticsGale">
+                  <p class="muted">Carregando...</p>
+                </div>
+              </div>
+              <!-- Hourly Gale -->
+              <div class="analytics-section">
+                <div class="analytics-title">⏰ Gales por Hora</div>
+                <div class="analytics-body" id="analyticsHourlyGale">
+                  <p class="muted">Carregando...</p>
+                </div>
+              </div>
+              <!-- Best/Worst Hours -->
+              <div class="analytics-section">
+                <div class="analytics-title">🏆 Melhores/Piores Horários</div>
+                <div class="analytics-body" id="analyticsHours">
+                  <p class="muted">Carregando...</p>
+                </div>
+              </div>
+              <!-- Market States -->
+              <div class="analytics-section">
+                <div class="analytics-title">📈 Desempenho por Mercado</div>
+                <div class="analytics-body" id="analyticsMarket">
+                  <p class="muted">Carregando...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

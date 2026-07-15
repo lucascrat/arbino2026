@@ -1,0 +1,12 @@
+2026/07/13-10:16:21.507 e10 Reusing MANIFEST C:\Users\hlsis\OneDrive\Desktop\arbinomo\.binomo-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/07/13-10:16:21.516 e10 Recovering log #63
+2026/07/13-10:16:21.521 e10 Reusing old log C:\Users\hlsis\OneDrive\Desktop\arbinomo\.binomo-profile\Default\Local Storage\leveldb/000063.log 
+2026/07/13-10:34:21.825 541c Level-0 table #68: started
+2026/07/13-10:34:21.842 541c Level-0 table #68: 8710 bytes OK
+2026/07/13-10:34:21.845 541c Delete type=0 #63
+2026/07/13-13:14:21.824 541c Level-0 table #70: started
+2026/07/13-13:14:21.838 541c Level-0 table #70: 8295 bytes OK
+2026/07/13-13:14:21.840 541c Delete type=0 #67
+2026/07/13-15:54:21.828 541c Level-0 table #72: started
+2026/07/13-15:54:21.839 541c Level-0 table #72: 8141 bytes OK
+2026/07/13-15:54:21.842 541c Delete type=0 #69

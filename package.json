@@ -1,0 +1,36 @@
+{
+  "name": "arbinomo",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Bot de análise e trading automatizado para Binomo (conta demo) — Desktop App",
+  "type": "module",
+  "main": "electron-launcher.cjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "discovery": "tsx src/index.ts --mode=discovery",
+    "trade": "tsx src/index.ts --mode=trade",
+    "backtest": "node dist/index.js --mode=backtest",
+    "electron": "npm run build && electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^16.4.5",
+    "electron": "^43.0.0",
+    "express": "^5.2.1",
+    "playwright": "^1.48.0",
+    "socket.io": "^4.8.3",
+    "winston": "^3.14.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.1.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@types/socket.io": "^3.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

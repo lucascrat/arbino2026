@@ -1,0 +1,47 @@
+services:
+  arbinomo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbinomo-bot
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    volumes:
+      - arbinomo-data:/data
+    environment:
+      - HEADLESS=true
+      - MODE=trade
+      - API_PORT=3456
+      - BINOMO_EMAIL=${BINOMO_EMAIL}
+      - BINOMO_PASSWORD=${BINOMO_PASSWORD}
+      - ASSET=${ASSET:-Z-CRY/IDX}
+      - CANDLE_TIMEFRAME_SECONDS=${CANDLE_TIMEFRAME_SECONDS:-15}
+      - EXPIRATION_SECONDS=${EXPIRATION_SECONDS:-60}
+      - ENTRY_VALUE=${ENTRY_VALUE:-5}
+      - MARTINGALE_LEVELS=${MARTINGALE_LEVELS:-0}
+      - MARTINGALE_MULTIPLIER=${MARTINGALE_MULTIPLIER:-2.0}
+      - COOLDOWN_SECONDS=${COOLDOWN_SECONDS:-15}
+      - MIN_SIGNAL_SCORE=${MIN_SIGNAL_SCORE:-80}
+      - MAX_DAILY_TRADES=${MAX_DAILY_TRADES:-20}
+      - MAX_DAILY_LOSS=${MAX_DAILY_LOSS:-100}
+      - MAX_DAILY_PROFIT=${MAX_DAILY_PROFIT:-0}
+      - AI_ENABLED=${AI_ENABLED:-false}
+      - AI_ENDPOINT=${AI_ENDPOINT:-https://api.groq.com/openai/v1}
+      - AI_MODEL=${AI_MODEL:-llama-3.3-70b-versatile}
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_MIN_CONFIDENCE=${AI_MIN_CONFIDENCE:-30}
+      - AI_TIMEOUT_MS=${AI_TIMEOUT_MS:-30000}
+      - RECORD_CANDLES=false
+      - SESSION_FILTER=synthetic
+      - POLL_INTERVAL_MS=1000
+      - DISPLAY=:99
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3456/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  arbinomo-data:
