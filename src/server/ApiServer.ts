@@ -4,6 +4,8 @@ import { Server as IOServer } from 'socket.io';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
+import net from 'node:net';
+import { WebSocketServer } from 'ws';
 import { AppDatabase } from '../db/Database.js';
 import { service } from '../logger.js';
 import { config } from '../config.js';
@@ -83,6 +85,7 @@ export class ApiServer {
     this.setupMiddleware();
     this.setupRoutes();
     this.setupSocket();
+    this.setupVncProxy();
   }
 
   private buildBaseState(): BotState {
@@ -131,6 +134,10 @@ export class ApiServer {
       next();
     });
     this.app.use(express.static(frontendDir));
+
+    // Serve noVNC core modules
+    const novncDir = path.resolve(projectRoot, 'node_modules', '@novnc', 'novnc', 'core');
+    this.app.use('/node_modules/@novnc/novnc/core', express.static(novncDir));
 
     // ===== API =====
     this.app.get('/api/health', (_req, res) => {
@@ -392,6 +399,48 @@ export class ApiServer {
     this.app.use((_req, res) => {
       res.sendFile(path.join(frontendDir, 'index.html'));
     });
+  }
+
+  private setupVncProxy(): void {
+    // WebSocket proxy: /api/vnc/ws -> localhost:5900 (x11vnc)
+    const wss = new WebSocketServer({ noServer: true });
+    this.server.on('upgrade', (req, sock, head) => {
+      const url = req.url ?? '';
+      if (url === '/api/vnc/ws') {
+        wss.handleUpgrade(req, sock, head, (ws) => {
+          log.info('VNC WebSocket conectado');
+          const tcp = net.connect(5900, '127.0.0.1', () => {
+            log.info('VNC TCP conectado a x11vnc:5900');
+          });
+          ws.on('message', (raw) => {
+            const buf = typeof raw === 'string' ? Buffer.from(raw)
+              : raw instanceof Buffer ? raw
+              : raw instanceof ArrayBuffer ? Buffer.from(raw)
+              : Buffer.concat(raw as Buffer[]);
+            tcp.write(buf);
+          });
+          tcp.on('data', (data: Buffer) => {
+            ws.send(data);
+          });
+          ws.on('close', () => {
+            log.info('VNC WebSocket fechado');
+            tcp.end();
+          });
+          tcp.on('close', () => {
+            ws.close();
+          });
+          tcp.on('error', (err) => {
+            log.warn('VNC TCP erro: %s', err.message);
+            ws.close();
+          });
+          ws.on('error', (err) => {
+            log.warn('VNC WS erro: %s', err.message);
+            tcp.end();
+          });
+        });
+      }
+    });
+    log.info('VNC proxy pronto em /api/vnc/ws');
   }
 
   private setupSocket(): void {

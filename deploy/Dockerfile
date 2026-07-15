@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
   libgbm1 libasound2 libxshmfence1 libglib2.0-0 \
   libgtk-3-0 libcups2 libxcomposite1 libxdamage1 \
   libpango-1.0-0 libcairo2 libatspi2.0-0 \
-  xvfb xauth \
+  xvfb xauth x11vnc \
   --no-install-recommends && \
   rm -rf /var/lib/apt/lists/*
 

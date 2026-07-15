@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arbinomo — VNC</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0e17; color:#e4e7ef; font-family:system-ui,sans-serif; display:flex; flex-direction:column; height:100vh; }
+  .toolbar { display:flex; align-items:center; gap:12px; padding:10px 16px; background:#131825; border-bottom:1px solid #1e2638; flex-shrink:0; }
+  .toolbar h2 { font-size:15px; font-weight:600; }
+  .toolbar .status { font-size:12px; color:#6b7280; margin-left:auto; }
+  .toolbar .status.connected { color:#22c55e; }
+  .toolbar .status.error { color:#ef4444; }
+  .vnc-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#0a0e17; padding:4px; }
+  canvas { display:block; image-rendering:pixelated; }
+  .help { font-size:12px; color:#6b7280; padding:8px 16px; background:#131825; border-top:1px solid #1e2638; flex-shrink:0; }
+  .help a { color:#3b82f6; }
+  .btn { padding:5px 14px; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; font-family:inherit; }
+  .btn-primary { background:#3b82f6; color:white; }
+  .btn-primary:hover { filter:brightness(1.15); }
+  .btn-danger { background:#dc2626; color:white; }
+  .btn-danger:hover { filter:brightness(1.15); }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <h2>🖥️ Controle Remoto</h2>
+  <span class="status" id="vncStatus">Desconectado</span>
+  <button class="btn btn-primary" id="btnConnect" onclick="connect()">Conectar</button>
+  <button class="btn btn-danger" id="btnDisconnect" onclick="disconnect()" disabled>Desconectar</button>
+</div>
+<div class="vnc-wrap">
+  <canvas id="vncCanvas"></canvas>
+</div>
+<div class="help">
+  🔑 Faça login manual no Binomo. O perfil será salvo em <code>/data/.binomo-profile</code>.
+  Depois de logado, feche esta página e clique "Iniciar" no dashboard. 
+  <a href="/" style="margin-left:8px">← Voltar ao Dashboard</a>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "@novnc/novnc/core/": "./node_modules/@novnc/novnc/core/"
+  }
+}
+</script>
+<script type="module">
+import RFB from '@novnc/novnc/core/rfb.js';
+
+let rfb = null;
+
+window.connect = function() {
+  const status = document.getElementById('vncStatus');
+  const btnConn = document.getElementById('btnConnect');
+  const btnDisc = document.getElementById('btnDisconnect');
+  
+  // Connect via WebSocket proxy on the same server
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = proto + '//' + window.location.host + '/api/vnc/ws';
+  
+  status.textContent = 'Conectando...';
+  status.className = 'status';
+  
+  try {
+    rfb = new RFB(document.getElementById('vncCanvas'), url, {
+      credentials: { password: '' },
+      shared: true,
+    });
+    
+    rfb.addEventListener('connect', () => {
+      status.textContent = 'Conectado ✓';
+      status.className = 'status connected';
+      btnConn.disabled = true;
+      btnDisc.disabled = false;
+    });
+    
+    rfb.addEventListener('disconnect', () => {
+      status.textContent = 'Desconectado';
+      status.className = 'status';
+      btnConn.disabled = false;
+      btnDisc.disabled = true;
+      rfb = null;
+    });
+    
+    rfb.addEventListener('securityfailure', (e) => {
+      status.textContent = 'Erro de segurança: ' + (e.detail?.reason || 'desconhecido');
+      status.className = 'status error';
+    });
+  } catch (err) {
+    status.textContent = 'Erro: ' + err.message;
+    status.className = 'status error';
+  }
+};
+
+window.disconnect = function() {
+  if (rfb) {
+    rfb.disconnect();
+    rfb = null;
+  }
+};
+</script>
+</body>
+</html>
