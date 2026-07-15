@@ -9,7 +9,7 @@ import { Trader } from './execution/Trader.js';
 import { RiskManager } from './risk/RiskManager.js';
 import { Backtester, runBacktest } from './backtest/Backtester.js';
 import { AIAdvisor } from './ai/AIAdvisor.js';
-import { BotApiClient } from './ai/BotApiClient.js';
+import { BotApiClient, type DiagnosticInfo } from './ai/BotApiClient.js';
 import { trendBias } from './analysis/CandlePatterns.js';
 import path from 'node:path';
 
@@ -248,6 +248,21 @@ export class BinomoBot {
           if (candleCount === 0) {
             log.warn('Nenhum candle ainda. Verifique se o navegador esta logado no Binomo e na pagina de trading.');
           }
+          // Envia diagnostico do feed
+          const rawLog = this.feed.getRawLog();
+          const diag: DiagnosticInfo = {
+            wsFramesReceived: rawLog.filter(f => f.dir === 'in').length,
+            wsFramesSent: rawLog.filter(f => f.dir === 'out').length,
+            candleCount,
+            socketCount: this.feed.socketCount,
+            lastPrice: this.feed.lastPrice,
+            asset: config.asset,
+            sessionReady: this.session.ready,
+            uptime: process.uptime(),
+            lastTickTime: this.feed.lastTickTime,
+            lastFramePreview: rawLog.length > 0 ? rawLog.slice(-1)[0].payload.slice(0, 200) : '',
+          };
+          this.api.sendDiagnostic(diag);
         } else if (candleCount > 0 && Date.now() - lastProgressLog > 5000) {
           this.api.sendWarmup(candleCount, 30);
         }

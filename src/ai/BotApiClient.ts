@@ -1,5 +1,5 @@
 import { service } from '../logger.js';
-import type { BotEvent } from '../server/ApiServer.js';
+import type { BotEvent, DiagnosticInfo } from '../server/ApiServer.js';
 
 const log = service('BotApi');
 
@@ -7,6 +7,8 @@ const log = service('BotApi');
  * Cliente HTTP para o bot enviar eventos em tempo real ao servidor API.
  * O servidor API então repassa os eventos ao frontend via WebSocket.
  */
+export type { DiagnosticInfo } from '../server/ApiServer.js';
+
 export class BotApiClient {
   private baseUrl: string;
   public sessionId: string;
@@ -72,5 +74,9 @@ export class BotApiClient {
 
   sendWarmup(candles: number, target: number): void {
     void this.sendEvent({ type: 'warmup', candles, target });
+  }
+
+  sendDiagnostic(info: DiagnosticInfo): void {
+    void this.sendEvent({ type: 'diagnostic', info });
   }
 }

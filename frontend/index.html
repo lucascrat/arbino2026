@@ -39,6 +39,7 @@
           <span class="balance-label">Saldo Demo</span>
           <span class="balance-value" id="balanceValue">—</span>
         </div>
+        <button class="btn btn-sm btn-ghost" onclick="openDiagnostic()">🔍 Diagnóstico</button>
         <button class="btn btn-success" id="btnStart" onclick="startBot()">Iniciar</button>
         <button class="btn btn-danger" id="btnStop" onclick="stopBot()" disabled>Parar</button>
       </div>
@@ -247,6 +248,23 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diagnostic Modal -->
+  <div class="modal-overlay" id="diagModal" style="display:none" onclick="if(event.target===this)closeDiagnostic()">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>🔍 Diagnóstico do Sistema</h3>
+        <button class="btn btn-sm btn-ghost" onclick="closeDiagnostic()">✕</button>
+      </div>
+      <div class="modal-body" id="diagBody">
+        <p class="muted">Carregando...</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="openDiagnostic()">↻ Atualizar</button>
+        <button class="btn btn-sm btn-primary" onclick="closeDiagnostic()">Fechar</button>
       </div>
     </div>
   </div>

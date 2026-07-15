@@ -51,10 +51,16 @@ export class CandleFeed {
   public balance: { amount: number; currency: string; accountType: string } | null = null;
   /** Último preço recebido via tick. */
   public lastPrice: number | null = null;
+  /** Timestamp do último tick recebido (ms). */
+  public lastTickTime: number | null = null;
   private balanceWaiters = new Set<(balance: number) => void>();
 
   constructor(timeframeSeconds = 5) {
     this.tfMs = timeframeSeconds * 1000;
+  }
+
+  get socketCount(): number {
+    return this.sockets.size;
   }
 
   registerSocket(socket: WebSocket): void {
@@ -76,12 +82,12 @@ export class CandleFeed {
 
   handleOutgoing(url: string, data: string | Buffer): void {
     const payload = typeof data === 'string' ? data : data.toString('utf8');
-    if (config.mode === 'discovery') this.pushRaw(url, 'out', payload);
+    this.pushRaw(url, 'out', payload);
   }
 
   handleIncoming(url: string, data: string | Buffer): void {
     const payload = typeof data === 'string' ? data : data.toString('utf8');
-    if (config.mode === 'discovery') this.pushRaw(url, 'in', payload);
+    this.pushRaw(url, 'in', payload);
 
     this.processPhoenix(payload);
   }
@@ -168,6 +174,7 @@ export class CandleFeed {
   }
 
   private ingestTick(tick: Tick): void {
+    this.lastTickTime = Date.now();
     // Filtro anti-contaminacao: se o preco divergir mais de 10% do ultimo, ignora
     // (protecao contra ticks de outro asset misturados no mesmo WS)
     if (this.lastPrice !== null && Math.abs(tick.price - this.lastPrice) / this.lastPrice > 0.10) {
@@ -259,13 +266,24 @@ export class CandleFeed {
       this.rawDumpStream.write(JSON.stringify({ ts: Date.now(), dir, url, payload }) + '\n');
     }
 
-    if (log.level === 'debug' || true) {
-      log.debug('[discovery] %s %s %dB %s', dir.toUpperCase(), shortUrl(url), payload.length, preview(payload));
+    if (log.level === 'debug') {
+      log.debug('[ws] %s %s %dB %s', dir.toUpperCase(), shortUrl(url), payload.length, preview(payload));
     }
   }
 
   getRawLog(): RawFrame[] {
     return [...this.rawLog];
+  }
+
+  getDiagnostics(): { socketCount: number; frameCount: number; candleCount: number; lastPrice: number | null; sentiment: unknown; balance: unknown } {
+    return {
+      socketCount: this.sockets.size,
+      frameCount: this.rawLog.length,
+      candleCount: this.candles.length,
+      lastPrice: this.lastPrice,
+      sentiment: this.sentiment,
+      balance: this.balance,
+    };
   }
 
   getCandles(count = 200): Candle[] {
@@ -281,6 +299,35 @@ export class CandleFeed {
     this.rawDumpStream?.end();
     this.csvStream?.end();
   }
+}
+
+/**
+ * Busca recursivamente por pares chave:valor que contenham 'rate' numerico
+ * ou 'sent_at' ISO em objetos aninhados (fallback para formatos desconhecidos).
+ */
+function deepFindTicks(node: unknown, depth = 0): Tick[] {
+  if (depth > 6 || typeof node !== 'object' || node === null) return [];
+  const out: Tick[] = [];
+  const obj = node as Record<string, unknown>;
+  for (const val of Object.values(obj)) {
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        if (typeof item === 'object' && item !== null) {
+          const tick = item as Record<string, unknown>;
+          const rate = Number(tick.rate);
+          const timeStr = typeof tick.sent_at === 'string' ? tick.sent_at : tick.provider_time;
+          if (Number.isFinite(rate) && typeof timeStr === 'string') {
+            out.push({ time: parseIsoMs(timeStr), price: rate });
+          } else {
+            out.push(...deepFindTicks(item, depth + 1));
+          }
+        }
+      }
+    } else if (typeof val === 'object' && val !== null) {
+      out.push(...deepFindTicks(val, depth + 1));
+    }
+  }
+  return out;
 }
 
 function shortUrl(u: string): string {
@@ -305,24 +352,28 @@ function extractTicks(node: unknown): Tick[] {
   if (typeof node !== 'object' || node === null) return [];
   const obj = node as Record<string, unknown>;
 
-  // formato tick: tem "data" -> array -> "assets"
-  if (!Array.isArray(obj.data)) return [];
-  const out: Tick[] = [];
-  for (const entry of obj.data) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const assets = (entry as Record<string, unknown>).assets;
-    if (!Array.isArray(assets)) continue;
-    for (const a of assets) {
-      if (typeof a !== 'object' || a === null) continue;
-      const tick = a as Record<string, unknown>;
-      const rate = Number(tick.rate);
-      const timeStr = typeof tick.sent_at === 'string' ? tick.sent_at : tick.provider_time;
-      if (Number.isFinite(rate) && typeof timeStr === 'string') {
-        out.push({ time: parseIsoMs(timeStr), price: rate });
+  // formato tick conhecido: tem "data" -> array -> "assets"
+  if (Array.isArray(obj.data)) {
+    const out: Tick[] = [];
+    for (const entry of obj.data) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const assets = (entry as Record<string, unknown>).assets;
+      if (!Array.isArray(assets)) continue;
+      for (const a of assets) {
+        if (typeof a !== 'object' || a === null) continue;
+        const tick = a as Record<string, unknown>;
+        const rate = Number(tick.rate);
+        const timeStr = typeof tick.sent_at === 'string' ? tick.sent_at : tick.provider_time;
+        if (Number.isFinite(rate) && typeof timeStr === 'string') {
+          out.push({ time: parseIsoMs(timeStr), price: rate });
+        }
       }
     }
+    if (out.length) return out;
   }
-  return out;
+
+  // fallback: busca profunda por qualquer rate + sent_at em objetos aninhados
+  return deepFindTicks(node);
 }
 
 function parseIsoMs(iso: string): number {

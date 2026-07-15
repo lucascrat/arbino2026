@@ -355,6 +355,51 @@ function addLog(level, message, svc) {
   container.scrollTop = container.scrollHeight;
 }
 
+function openDiagnostic() {
+  const modal = document.getElementById('diagModal');
+  const body = document.getElementById('diagBody');
+  modal.style.display = 'flex';
+  body.innerHTML = '<p class="muted">Carregando diagnóstico...</p>';
+  fetch('/api/diagnose').then(r => r.json()).then(data => {
+    const d = data.lastDiagnostic;
+    const health = data.health;
+    let html = '<div class="diag-row"><span class="diag-label">Bot rodando</span><span class="diag-value ' + (data.botRunning ? 'ok' : 'err') + '">' + (data.botRunning ? 'Sim' : 'Não') + '</span></div>';
+    html += '<div class="diag-row"><span class="diag-label">Server uptime</span><span class="diag-value">' + formatUptime(health.uptime) + '</span></div>';
+    if (d) {
+      const wsOk = d.wsFramesReceived > 0;
+      const tickOk = d.lastTickTime !== null && (Date.now() - d.lastTickTime < 30000);
+      const candleOk = d.candleCount > 0;
+      html += '<div class="diag-row"><span class="diag-label">WS frames recebidos</span><span class="diag-value ' + (wsOk ? 'ok' : 'err') + '">' + d.wsFramesReceived + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">WS frames enviados</span><span class="diag-value">' + d.wsFramesSent + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Con sockets ativas</span><span class="diag-value ' + (d.socketCount > 0 ? 'ok' : 'err') + '">' + d.socketCount + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Candles gerados</span><span class="diag-value ' + (candleOk ? 'ok' : 'err') + '">' + d.candleCount + '<span style="font-weight:400;color:var(--text-muted);font-size:11px"> / 30 necessário</span></span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Último preço</span><span class="diag-value ' + (d.lastPrice !== null ? 'ok' : 'err') + '">' + (d.lastPrice !== null ? d.lastPrice.toFixed(6) : 'Nenhum') + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Último tick há</span><span class="diag-value ' + (tickOk ? 'ok' : 'err') + '">' + (d.lastTickTime ? formatUptime((Date.now() - d.lastTickTime) / 1000) + ' atrás' : 'Nunca') + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Asset</span><span class="diag-value">' + d.asset + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Sessão pronta</span><span class="diag-value ' + (d.sessionReady ? 'ok' : 'err') + '">' + (d.sessionReady ? 'Sim' : 'Não') + '</span></div>';
+      html += '<div class="diag-row"><span class="diag-label">Bot uptime</span><span class="diag-value">' + formatUptime(d.uptime) + '</span></div>';
+      if (d.lastFramePreview) {
+        html += '<div class="diag-row" style="flex-direction:column;align-items:stretch"><span class="diag-label">Último frame WS:</span><div class="diag-frame">' + escapeHtml(d.lastFramePreview) + '</div></div>';
+      }
+    } else {
+      html += '<p class="muted" style="margin-top:8px">Nenhum diagnóstico do bot disponível. Inicie o bot para ver dados.</p>';
+    }
+    body.innerHTML = html;
+  }).catch(err => {
+    body.innerHTML = '<p class="err" style="color:var(--red)">Erro ao carregar: ' + err.message + '</p>';
+  });
+}
+
+function closeDiagnostic() {
+  document.getElementById('diagModal').style.display = 'none';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
 function clearLogs() {
   document.getElementById('logContainer').innerHTML = '<div class="log-empty">Logs aparecerão aqui...</div>';
 }

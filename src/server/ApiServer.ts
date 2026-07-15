@@ -37,6 +37,19 @@ export interface BotState {
   lastTrade: unknown;
 }
 
+export interface DiagnosticInfo {
+  wsFramesReceived: number;
+  wsFramesSent: number;
+  candleCount: number;
+  socketCount: number;
+  lastPrice: number | null;
+  asset: string;
+  sessionReady: boolean;
+  uptime: number;
+  lastTickTime: number | null;
+  lastFramePreview: string;
+}
+
 export type BotEvent =
   | { type: 'log'; level: string; service: string; message: string; ts: number }
   | { type: 'candle'; candle: { time: number; open: number; high: number; low: number; close: number } }
@@ -45,7 +58,8 @@ export type BotEvent =
   | { type: 'result'; trade: unknown }
   | { type: 'balance'; balance: number; currency: string }
   | { type: 'state'; state: BotState }
-  | { type: 'warmup'; candles: number; target: number };
+  | { type: 'warmup'; candles: number; target: number }
+  | { type: 'diagnostic'; info: DiagnosticInfo };
 
 export class ApiServer {
   private app = express();
@@ -56,6 +70,7 @@ export class ApiServer {
   private botProcess: ChildProcess | null = null;
   private botRunning = false;
   private state: BotState;
+  private lastDiagnostic: DiagnosticInfo | null = null;
 
   constructor(port = 3456, db?: AppDatabase) {
     this.port = port;
@@ -351,7 +366,19 @@ export class ApiServer {
         this.state.balance = event.balance;
         this.emitEvent({ type: 'state', state: this.getState() });
       }
+      if (event.type === 'diagnostic' && event.info) {
+        this.lastDiagnostic = event.info;
+      }
       res.json({ ok: true, tradeId });
+    });
+
+    // Endpoint de diagnostico
+    this.app.get('/api/diagnose', (_req, res) => {
+      res.json({
+        botRunning: this.botRunning,
+        lastDiagnostic: this.lastDiagnostic,
+        health: { uptime: process.uptime() },
+      });
     });
 
     // Endpoint para logs
@@ -399,6 +426,9 @@ export class ApiServer {
         break;
       case 'warmup':
         this.io.emit('warmup', event);
+        break;
+      case 'diagnostic':
+        // not forwarded to frontend; stored in lastDiagnostic
         break;
     }
   }
