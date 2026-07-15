@@ -433,6 +433,25 @@ export class ApiServer {
       res.json({ ok: true, tradeId });
     });
 
+    // Verifica se x11vnc esta acessivel
+    this.app.get('/api/vnc/health', (_req, res) => {
+      const sock = new net.Socket();
+      sock.setTimeout(3000);
+      sock.on('connect', () => {
+        sock.destroy();
+        res.json({ ok: true, message: 'x11vnc respondendo na porta 5900' });
+      });
+      sock.on('error', () => {
+        sock.destroy();
+        res.json({ ok: false, message: 'x11vnc nao respondeu na porta 5900' });
+      });
+      sock.on('timeout', () => {
+        sock.destroy();
+        res.json({ ok: false, message: 'Timeout ao conectar em x11vnc:5900' });
+      });
+      sock.connect(5900, '127.0.0.1');
+    });
+
     // Endpoint de diagnostico
     this.app.get('/api/diagnose', (_req, res) => {
       res.json({

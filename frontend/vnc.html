@@ -51,17 +51,35 @@ import RFB from '@novnc/novnc/core/rfb.js';
 
 let rfb = null;
 
-window.connect = function() {
+function setStatus(msg, cls) {
+  const el = document.getElementById('vncStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (cls || '');
+}
+
+window.connect = async function() {
   const status = document.getElementById('vncStatus');
   const btnConn = document.getElementById('btnConnect');
   const btnDisc = document.getElementById('btnDisconnect');
   
-  // Connect via WebSocket proxy on the same server
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = proto + '//' + window.location.host + '/api/vnc/ws';
   
-  status.textContent = 'Conectando...';
-  status.className = 'status';
+  setStatus('Conectando...');
+  
+  // Testa se o x11vnc esta rodando
+  try {
+    const healthRes = await fetch('/api/vnc/health');
+    const health = await healthRes.json();
+    if (!health.ok) {
+      setStatus('x11vnc offline: ' + health.message, 'error');
+      return;
+    }
+    setStatus('x11vnc OK. Conectando...');
+  } catch (err) {
+    setStatus('Erro ao verificar VNC: ' + err.message, 'error');
+    return;
+  }
   
   try {
     rfb = new RFB(document.getElementById('vncCanvas'), url, {
@@ -70,27 +88,30 @@ window.connect = function() {
     });
     
     rfb.addEventListener('connect', () => {
-      status.textContent = 'Conectado ✓';
-      status.className = 'status connected';
+      setStatus('Conectado ✓', 'connected');
       btnConn.disabled = true;
       btnDisc.disabled = false;
     });
     
-    rfb.addEventListener('disconnect', () => {
-      status.textContent = 'Desconectado';
-      status.className = 'status';
+    rfb.addEventListener('disconnect', (e) => {
+      setStatus('Desconectado' + (e.detail?.clean ? '' : ' (erro)'), 'error');
       btnConn.disabled = false;
       btnDisc.disabled = true;
       rfb = null;
     });
     
     rfb.addEventListener('securityfailure', (e) => {
-      status.textContent = 'Erro de segurança: ' + (e.detail?.reason || 'desconhecido');
-      status.className = 'status error';
+      setStatus('Erro segurança: ' + (e.detail?.reason || 'desconhecido'), 'error');
     });
+    
+    // Timeout: se nao conectar em 15s, mostra erro
+    setTimeout(() => {
+      if (!rfb || rfb._rfbConnectionState !== 'connected') {
+        setStatus('Timeout: VNC nao respondeu (x11vnc offline?)', 'error');
+      }
+    }, 15000);
   } catch (err) {
-    status.textContent = 'Erro: ' + err.message;
-    status.className = 'status error';
+    setStatus('Erro: ' + err.message, 'error');
   }
 };
 
@@ -98,8 +119,12 @@ window.disconnect = function() {
   if (rfb) {
     rfb.disconnect();
     rfb = null;
+    setStatus('Desconectado');
   }
 };
+
+document.getElementById('btnConnect').disabled = false;
+setStatus('Pronto. Clique Conectar.');
 </script>
 </body>
 </html>
