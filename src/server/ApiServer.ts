@@ -322,7 +322,8 @@ export class ApiServer {
     });
 
     this.app.get('/api/setup/status', (_req, res) => {
-      res.json({ running: this.setupProcess !== null });
+      const alive = this.setupProcess !== null && this.setupProcess.exitCode === null && !this.setupProcess.killed;
+      res.json({ running: alive });
     });
 
     this.app.get('/api/bot/status', (_req, res) => {

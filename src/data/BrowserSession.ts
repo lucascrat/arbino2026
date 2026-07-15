@@ -25,7 +25,13 @@ export class BrowserSession {
       viewport: { width: 1366, height: 850 },
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
-      args: ['--disable-blink-features=AutomationControlled'],
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+      ],
     });
 
     this.page = this.ctx.pages()[0] ?? (await this.ctx.newPage());
