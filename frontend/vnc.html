@@ -12,6 +12,7 @@
   .toolbar .status { font-size:12px; color:#6b7280; margin-left:auto; }
   .toolbar .status.connected { color:#22c55e; }
   .toolbar .status.error { color:#ef4444; }
+  .toolbar .status.loading { color:#f59e0b; }
   .vnc-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#0a0e17; padding:4px; }
   canvas { display:block; image-rendering:pixelated; }
   .help { font-size:12px; color:#6b7280; padding:8px 16px; background:#131825; border-top:1px solid #1e2638; flex-shrink:0; }
@@ -25,97 +26,101 @@
 </head>
 <body>
 <div class="toolbar">
-  <h2>🖥️ Controle Remoto</h2>
-  <span class="status" id="vncStatus">Desconectado</span>
-  <button class="btn btn-primary" id="btnConnect" onclick="connect()">Conectar</button>
-  <button class="btn btn-danger" id="btnDisconnect" onclick="disconnect()" disabled>Desconectar</button>
+  <h2>Controle Remoto</h2>
+  <span class="status" id="vncStatus">Inicializando...</span>
+  <button class="btn btn-primary" id="btnConnect" onclick="doConnect()" disabled>Conectar</button>
+  <button class="btn btn-danger" id="btnDisconnect" onclick="doDisconnect()" disabled>Desconectar</button>
 </div>
 <div class="vnc-wrap">
   <canvas id="vncCanvas"></canvas>
 </div>
 <div class="help">
-  🔑 Faça login manual no Binomo. O perfil será salvo em <code>/data/.binomo-profile</code>.
-  Depois de logado, feche esta página e clique "Iniciar" no dashboard. 
-  <a href="/" style="margin-left:8px">← Voltar ao Dashboard</a>
+  Faca login manual no Binomo. O perfil sera salvo em <code>/data/.binomo-profile</code>.
+  Depois de logado, feche esta pagina e clique "Iniciar" no dashboard.
+  <a href="/" style="margin-left:8px">Voltar ao Dashboard</a>
 </div>
 
 <script type="importmap">
 {
   "imports": {
-    "@novnc/novnc/core/": "/novnc/"
+    "@novnc/novnc/core/": "/novnc/core/"
   }
 }
 </script>
+
 <script type="module">
 import RFB from '@novnc/novnc/core/rfb.js';
 
-let rfb = null;
-
 function setStatus(msg, cls) {
-  const el = document.getElementById('vncStatus');
+  var el = document.getElementById('vncStatus');
   el.textContent = msg;
   el.className = 'status ' + (cls || '');
 }
 
-window.connect = async function() {
-  const status = document.getElementById('vncStatus');
-  const btnConn = document.getElementById('btnConnect');
-  const btnDisc = document.getElementById('btnDisconnect');
-  
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = proto + '//' + window.location.host + '/api/vnc/ws';
-  
+window.doConnect = async function() {
+  var btnConn = document.getElementById('btnConnect');
+  var btnDisc = document.getElementById('btnDisconnect');
+  btnConn.disabled = true;
   setStatus('Conectando...');
-  
-  // Testa se o x11vnc esta rodando
+
   try {
-    const healthRes = await fetch('/api/vnc/health');
-    const health = await healthRes.json();
+    var healthRes = await fetch('/api/vnc/health');
+    var health = await healthRes.json();
     if (!health.ok) {
       setStatus('x11vnc offline: ' + health.message, 'error');
+      btnConn.disabled = false;
       return;
     }
-    setStatus('x11vnc OK. Conectando...');
+    setStatus('x11vnc OK. Conectando WebSocket...');
   } catch (err) {
     setStatus('Erro ao verificar VNC: ' + err.message, 'error');
+    btnConn.disabled = false;
     return;
   }
-  
+
   try {
+    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + window.location.host + '/api/vnc/ws';
+
     rfb = new RFB(document.getElementById('vncCanvas'), url, {
       credentials: { password: '' },
       shared: true,
     });
-    
-    rfb.addEventListener('connect', () => {
-      setStatus('Conectado ✓', 'connected');
+
+    rfb.addEventListener('connect', function() {
+      setStatus('Conectado', 'connected');
       btnConn.disabled = true;
       btnDisc.disabled = false;
     });
-    
-    rfb.addEventListener('disconnect', (e) => {
-      setStatus('Desconectado' + (e.detail?.clean ? '' : ' (erro)'), 'error');
+
+    rfb.addEventListener('disconnect', function(e) {
+      var reason = (e.detail && e.detail.clean) ? '' : ' (erro)';
+      setStatus('Desconectado' + reason, 'error');
       btnConn.disabled = false;
       btnDisc.disabled = true;
       rfb = null;
     });
-    
-    rfb.addEventListener('securityfailure', (e) => {
-      setStatus('Erro segurança: ' + (e.detail?.reason || 'desconhecido'), 'error');
+
+    rfb.addEventListener('securityfailure', function(e) {
+      var reason = (e.detail && e.detail.reason) ? e.detail.reason : 'desconhecido';
+      setStatus('Erro seguranca: ' + reason, 'error');
+      btnConn.disabled = false;
     });
-    
-    // Timeout: se nao conectar em 15s, mostra erro
-    setTimeout(() => {
-      if (!rfb || rfb._rfbConnectionState !== 'connected') {
-        setStatus('Timeout: VNC nao respondeu (x11vnc offline?)', 'error');
+
+    setTimeout(function() {
+      if (rfb && rfb._rfbConnectionState !== 'connected') {
+        setStatus('Timeout: VNC nao respondeu', 'error');
       }
     }, 15000);
   } catch (err) {
     setStatus('Erro: ' + err.message, 'error');
+    btnConn.disabled = false;
   }
 };
 
-window.disconnect = function() {
+var rfb = null;
+
+window.doDisconnect = function() {
   if (rfb) {
     rfb.disconnect();
     rfb = null;

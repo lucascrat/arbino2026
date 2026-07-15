@@ -136,8 +136,8 @@ export class ApiServer {
     });
     this.app.use(express.static(frontendDir));
 
-    // Serve noVNC core modules (via /novnc/ alias)
-    const novncDir = path.resolve(projectRoot, 'node_modules', '@novnc', 'novnc', 'core');
+    // Serve entire noVNC package (core/ + vendor/pako/) via /novnc/ alias
+    const novncDir = path.resolve(projectRoot, 'node_modules', '@novnc', 'novnc');
     this.app.use('/novnc', express.static(novncDir));
 
     // ===== API =====
