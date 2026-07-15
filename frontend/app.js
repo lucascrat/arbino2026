@@ -1,5 +1,5 @@
 // Arbinomo Frontend — Dashboard
-const socket = io('http://localhost:3456');
+const socket = io();
 let candleChart = null;
 let botRunning = false;
 
@@ -79,7 +79,7 @@ async function startBot() {
     return;
   }
   try {
-    const res = await fetch('http://localhost:3456/api/bot/start', {
+    const res = await fetch('/api/bot/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: 'trade' }),
@@ -112,7 +112,7 @@ async function stopBot() {
     return;
   }
   try {
-    const res = await fetch('http://localhost:3456/api/bot/stop', { method: 'POST' });
+    const res = await fetch('/api/bot/stop', { method: 'POST' });
     const data = await res.json();
     if (data.ok) {
       botRunning = false;
@@ -174,10 +174,10 @@ function updateState(state) {
 
 async function toggleAi() {
   try {
-    const res = await fetch('http://localhost:3456/api/settings');
+    const res = await fetch('/api/settings');
     const settings = await res.json();
     const current = settings.aiEnabled === 'true';
-    await fetch('http://localhost:3456/api/settings', {
+    await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ aiEnabled: (!current).toString() }),
@@ -192,7 +192,7 @@ async function toggleAi() {
 // ===== Stats =====
 async function refreshStats() {
   try {
-    const res = await fetch('http://localhost:3456/api/stats');
+    const res = await fetch('/api/stats');
     const data = await res.json();
     const s = data.overall;
     document.getElementById('statWinRate').textContent = s.winRate.toFixed(1) + '%';
@@ -208,7 +208,7 @@ async function refreshStats() {
 // ===== Trades Table =====
 async function loadTrades() {
   try {
-    const res = await fetch('http://localhost:3456/api/trades?limit=100');
+    const res = await fetch('/api/trades?limit=100');
     const trades = await res.json();
     const body = document.getElementById('tradeBody');
     body.innerHTML = '';
@@ -349,7 +349,7 @@ async function saveSettings() {
     maxDailyLoss: document.getElementById('cfgStopLoss').value,
   };
   try {
-    await fetch('http://localhost:3456/api/settings', {
+    await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -431,7 +431,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 async function fetchState() {
   try {
-    const res = await fetch('http://localhost:3456/api/state');
+    const res = await fetch('/api/state');
     const state = await res.json();
     updateState(state);
   } catch (err) {
@@ -442,7 +442,7 @@ async function fetchState() {
 // ===== Analytics =====
 async function loadAnalytics() {
   try {
-    const res = await fetch('http://localhost:3456/api/analytics');
+    const res = await fetch('/api/analytics');
     const data = await res.json();
     renderGaleStats(data.galeStats);
     renderHourlyGale(data.hourlyGales);
