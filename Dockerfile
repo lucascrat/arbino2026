@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
   libpango-1.0-0 libcairo2 libatspi2.0-0 \
   libx11-xcb1 libxcb1 libxext6 libxi6 libxrender1 \
   libxtst6 libxfixes3 libxss1 libxkbfile1 libxrandr2 \
-  xvfb xauth x11vnc x11-utils xdotool \
+  xvfb xauth x11vnc x11-utils xdotool graphicsmagick \
   --no-install-recommends && \
   rm -rf /var/lib/apt/lists/*
 
