@@ -243,7 +243,8 @@
 
   function send(bytes) {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(bytes.buffer);
+      var u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      ws.send(u8.buffer);
     }
   }
 
