@@ -121,8 +121,10 @@ async function startBot() {
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStop').disabled = false;
       updateStatusBadge(true);
-      addLog('info', 'Bot iniciado');
+      addLog('info', 'Bot iniciado. Abra o VNC para fazer login manual se necessario.');
       document.getElementById('vncHint').classList.add('show');
+    } else {
+      addLog('error', 'Falha ao iniciar: ' + (data.message || 'Erro'));
     }
   } catch(e) { addLog('error', 'Erro ao iniciar: ' + e.message); }
 }
@@ -149,8 +151,12 @@ async function setupLogin() {
   try {
     var res = await api('/api/setup/login', { method: 'POST' });
     var data = await res.json();
-    addLog('info', data.message || 'Navegador aberto para login');
-    window.open('/vnc.html', '_blank');
+    if (data.ok) {
+      addLog('info', data.message || 'Navegador aberto para login');
+      window.open('/vnc.html', '_blank');
+    } else {
+      addLog('error', 'Setup: ' + (data.message || 'Erro desconhecido'));
+    }
   } catch(e) { addLog('error', 'Setup: ' + e.message); }
 }
 
@@ -324,7 +330,7 @@ function updateChart(candle) {
 // ===== LOGS =====
 function addLog(level, msg, svc) {
   var box = document.getElementById('logBox');
-  if (box.textContent === '— aguardando eventos —') box.textContent = '';
+  if (box.textContent === '--- aguardando eventos ---') box.textContent = '';
   var time = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   var cls = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info';
   box.innerHTML += '<span class="' + cls + '">' + time + ' [' + (svc || '') + '] ' + msg + '</span>\n';

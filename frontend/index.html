@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🤖</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>B</text></svg>">
 <title>Arbinomo — Bot Binomo</title>
 <style>
 :root {
@@ -19,10 +19,10 @@
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; overflow:hidden; }
-body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif; font-size:13px; display:flex; flex-direction:column; }
+body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; font-size:13px; display:flex; flex-direction:column; }
 input, button, select { font-family:inherit; font-size:13px; }
 button { cursor:pointer; border:none; border-radius:var(--radius); padding:8px 14px; font-weight:600; transition:.15s; }
-.btn-sm { padding:5px 10px; font-size:11px; }
+.btn-sm { padding:4px 9px; font-size:11px; }
 .btn-primary { background:var(--blue); color:#fff; }
 .btn-primary:hover { filter:brightness(1.15); }
 .btn-success { background:var(--green); color:#fff; }
@@ -31,11 +31,12 @@ button { cursor:pointer; border:none; border-radius:var(--radius); padding:8px 1
 .btn-danger:hover { filter:brightness(1.15); }
 .btn-ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
 .btn-ghost:hover { background:var(--card); }
+a.btn-ghost { display:inline-flex; align-items:center; text-decoration:none; }
 
-/* ===== LOGIN OVERLAY ===== */
+/* ===== LOGIN ===== */
 #loginOverlay { position:fixed; inset:0; background:var(--bg); z-index:9999; display:flex; align-items:center; justify-content:center; }
 .login-card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:40px 32px; width:320px; max-width:90vw; text-align:center; }
-.login-card h1 { font-size:22px; font-weight:700; background:linear-gradient(135deg,var(--blue),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:8px; }
+.login-card h1 { font-size:22px; font-weight:700; background:linear-gradient(135deg,var(--blue),var(--purple)); background-clip:text; -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:8px; }
 .login-card p { color:var(--muted); margin-bottom:24px; font-size:12px; }
 .login-card input { width:100%; padding:10px 14px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); margin-bottom:12px; outline:none; }
 .login-card input:focus { border-color:var(--blue); }
@@ -43,106 +44,121 @@ button { cursor:pointer; border:none; border-radius:var(--radius); padding:8px 1
 
 /* ===== HEADER ===== */
 #app { display:flex; flex-direction:column; height:100%; overflow:hidden; }
-.header { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--card); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; min-height:44px; }
-.header h2 { font-size:15px; font-weight:700; background:linear-gradient(135deg,var(--blue),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.header { display:flex; align-items:center; gap:6px; padding:6px 10px; background:var(--card); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; min-height:40px; }
+.header h2 { font-size:14px; font-weight:700; background:linear-gradient(135deg,var(--blue),var(--purple)); background-clip:text; -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
 .status-badge { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
 .status-badge.running { background:var(--green); animation:pulse 1.5s infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 .spacer { flex:1; }
-.balance { color:var(--green); font-weight:700; font-size:13px; }
+.balance { color:var(--green); font-weight:700; font-size:12px; }
 .meta { color:var(--muted); font-size:11px; white-space:nowrap; }
 .dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
 .dot.green { background:var(--green); }
 .dot.red { background:var(--red); }
 
-/* ===== WARMUP / HINT ===== */
+/* ===== WARMUP ===== */
 .warmup { display:none; height:3px; background:var(--bg); flex-shrink:0; }
 .warmup.show { display:block; }
 .warmup-fill { height:100%; background:linear-gradient(90deg,var(--orange),var(--green)); transition:width .5s; }
+
+/* ===== VNC HINT ===== */
 .hint { display:none; background:rgba(59,130,246,.12); border-bottom:1px solid rgba(59,130,246,.25); padding:6px 12px; font-size:11px; color:var(--blue); flex-shrink:0; }
 .hint.show { display:block; }
+.hint a { color:var(--cyan); }
 
 /* ===== MAIN SCROLL ===== */
-.main-scroll { flex:1; overflow-y:auto; overflow-x:hidden; padding:10px; display:flex; flex-direction:column; gap:10px; }
+.main-scroll { flex:1; overflow-y:auto; overflow-x:hidden; padding:8px; display:flex; flex-direction:column; gap:8px; }
 
-/* ===== STATS ROW ===== */
-.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:12px; }
-.card .label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
-.card .value { font-size:18px; font-weight:700; }
-.card .sub { font-size:11px; color:var(--muted); margin-top:2px; }
+/* ===== STATS ===== */
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:6px; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:10px; }
+.card .label { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px; }
+.card .value { font-size:16px; font-weight:700; }
+.card .sub { font-size:10px; color:var(--muted); margin-top:2px; }
 .val-green { color:var(--green); }
 .val-red { color:var(--red); }
 .val-blue { color:var(--blue); }
 
 /* ===== CONTENT GRID ===== */
-.content { display:grid; grid-template-columns:1fr 320px; gap:8px; min-height:0; }
+.content { display:grid; grid-template-columns:1fr 300px; gap:8px; min-height:0; }
 @media (max-width:900px) { .content { grid-template-columns:1fr; } }
 
-/* ===== LEFT PANEL ===== */
-.left { display:flex; flex-direction:column; gap:8px; min-width:0; }
-.chart-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:10px; display:flex; flex-direction:column; height:280px; }
+/* ===== CHART CARD ===== */
+.chart-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:8px; display:flex; flex-direction:column; height:260px; }
 .chart-card canvas { width:100% !important; flex:1; min-height:0; }
-.table-wrap { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow-x:auto; max-height:260px; overflow-y:auto; }
-table { width:100%; border-collapse:collapse; font-size:11px; }
-th { position:sticky; top:0; background:var(--card); padding:6px 8px; text-align:left; color:var(--muted); font-weight:600; border-bottom:1px solid var(--border); white-space:nowrap; }
-td { padding:5px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.chart-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-shrink:0; }
+.chart-title span { font-weight:600; font-size:12px; }
+
+/* ===== TABLE ===== */
+.table-wrap { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow-x:auto; max-height:220px; overflow-y:auto; }
+table { width:100%; border-collapse:collapse; font-size:10px; }
+th { position:sticky; top:0; background:var(--card); padding:5px 6px; text-align:left; color:var(--muted); font-weight:600; border-bottom:1px solid var(--border); white-space:nowrap; }
+td { padding:4px 6px; border-bottom:1px solid var(--border); white-space:nowrap; }
 tr:hover { background:rgba(255,255,255,.02); }
-.badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:700; }
+.badge { display:inline-block; padding:1px 5px; border-radius:3px; font-size:9px; font-weight:700; }
 .badge-call { background:rgba(34,197,94,.15); color:var(--green); }
 .badge-put { background:rgba(239,68,68,.15); color:var(--red); }
 .badge-win { background:rgba(34,197,94,.15); color:var(--green); }
 .badge-loss { background:rgba(239,68,68,.15); color:var(--red); }
-.badge-gale { background:rgba(168,85,247,.12); color:var(--purple); font-size:9px; }
-.badge-ai { background:rgba(59,130,246,.12); color:var(--blue); font-size:9px; }
+.badge-gale { background:rgba(168,85,247,.12); color:var(--purple); font-size:8px; }
+.badge-ai { background:rgba(59,130,246,.12); color:var(--blue); font-size:8px; }
 
 /* ===== RIGHT PANEL ===== */
 .right { display:flex; flex-direction:column; gap:8px; min-width:0; }
-.config { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.config input, .config select { width:100%; padding:7px 8px; background:var(--bg2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:12px; outline:none; }
+
+/* Config grid: label + input na mesma linha */
+.config { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:center; }
+.config label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
+.config input, .config select { width:100%; padding:6px; background:var(--bg2); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:11px; outline:none; }
 .config input:focus { border-color:var(--blue); }
-.config label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; grid-column:span 2; margin-bottom:-4px; margin-top:2px; }
-.config .full { grid-column:span 2; }
-.btn-save { grid-column:span 2; }
-.signal { padding:8px 10px; border-radius:var(--radius); font-size:11px; }
+.config .span2 { grid-column:1/-1; }
+.btn-save { grid-column:1/-1; margin-top:2px; }
+
+/* Signal */
+.signal { padding:6px 8px; border-radius:var(--radius); font-size:11px; }
 .signal-call { border-left:3px solid var(--green); background:rgba(34,197,94,.06); }
 .signal-put { border-left:3px solid var(--red); background:rgba(239,68,68,.06); }
-.tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:10px; background:rgba(59,130,246,.12); color:var(--blue); margin:2px; }
-.ai-block { padding:6px 8px; border-radius:6px; margin-top:4px; font-size:10px; }
+.tag { display:inline-block; padding:1px 5px; border-radius:3px; font-size:9px; background:rgba(59,130,246,.12); color:var(--blue); margin:1px; }
+.ai-block { padding:4px 6px; border-radius:5px; margin-top:3px; font-size:10px; }
 .ai-yes { background:rgba(34,197,94,.08); color:var(--green); }
 .ai-no { background:rgba(239,68,68,.08); color:var(--red); }
-.logs { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:8px; font-family:'Cascadia Code',Consolas,monospace; font-size:10px; max-height:140px; overflow-y:auto; color:var(--muted); white-space:pre-wrap; word-break:break-all; }
+
+/* Logs */
+.logs { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:6px; font-family:Consolas,monospace; font-size:10px; max-height:120px; overflow-y:auto; color:var(--muted); white-space:pre-wrap; word-break:break-all; }
 .logs .warn { color:var(--orange); }
 .logs .error { color:var(--red); }
 .logs .info { color:var(--cyan); }
 
-/* ===== SCROLLBAR ===== */
-::-webkit-scrollbar { width:5px; height:5px; }
+/* Scrollbar */
+::-webkit-scrollbar { width:4px; height:4px; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--dim); border-radius:3px; }
 
 /* ===== MOBILE ===== */
 @media (max-width:768px) {
-  .header { gap:4px; padding:6px 8px; }
-  .header h2 { font-size:13px; }
-  .stats { grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:4px; }
-  .card { padding:8px; }
-  .card .value { font-size:15px; }
-  .main-scroll { padding:6px; gap:6px; }
-  .btn-sm { padding:4px 8px; font-size:10px; }
+  .header { gap:4px; padding:4px 6px; }
+  .header h2 { font-size:12px; }
+  .btn-sm { padding:3px 6px; font-size:10px; }
+  .stats { grid-template-columns:repeat(auto-fit,minmax(90px,1fr)); gap:4px; }
+  .card { padding:6px; }
+  .card .value { font-size:14px; }
+  .card .sub { font-size:9px; }
+  .main-scroll { padding:4px; gap:4px; }
+  .config { gap:3px 6px; }
+  .config input, .config select { padding:5px; font-size:10px; }
 }
 </style>
 </head>
 <body>
 
-<!-- LOGIN OVERLAY -->
+<!-- LOGIN -->
 <div id="loginOverlay">
   <div class="login-card">
     <h1>Arbinomo</h1>
     <p>Painel de controle do bot Binomo</p>
-    <input type="text" id="loginUser" placeholder="Usuário" value="admin">
+    <input type="text" id="loginUser" placeholder="Usuario" value="admin">
     <input type="password" id="loginPass" placeholder="Senha">
-    <div class="err" id="loginErr">Credenciais inválidas</div>
+    <div class="err" id="loginErr">Credenciais invalidas</div>
     <button class="btn-primary" onclick="doLogin()" style="width:100%">Entrar</button>
   </div>
 </div>
@@ -152,34 +168,34 @@ tr:hover { background:rgba(255,255,255,.02); }
   <div class="header">
     <h2>Arbinomo</h2>
     <span class="status-badge" id="statusDot"></span>
-    <span class="meta" id="sysStatus" style="margin-left:4px">—</span>
+    <span class="meta" id="sysStatus" style="margin-left:2px">---</span>
     <span class="spacer"></span>
-    <span class="balance" id="balanceValue">—</span>
-    <button class="btn-ghost btn-sm" onclick="openDiagnostic()">📊 Diag</button>
-    <a href="/vnc.html" class="btn-ghost btn-sm" style="text-decoration:none">🖥 VNC</a>
-    <button class="btn-ghost btn-sm" id="btnSetup" onclick="setupLogin()">🔧 Setup</button>
-    <button class="btn-success btn-sm" id="btnStart" onclick="startBot()">▶ Iniciar</button>
-    <button class="btn-danger btn-sm" id="btnStop" onclick="stopBot()" disabled>⏹ Parar</button>
+    <span class="balance" id="balanceValue">---</span>
+    <button class="btn-ghost btn-sm" onclick="openDiagnostic()">Diag</button>
+    <a href="/vnc.html" class="btn-ghost btn-sm">VNC</a>
+    <button class="btn-ghost btn-sm" id="btnSetup" onclick="setupLogin()">Setup</button>
+    <button class="btn-success btn-sm" id="btnStart" onclick="startBot()">Iniciar</button>
+    <button class="btn-danger btn-sm" id="btnStop" onclick="stopBot()" disabled>Parar</button>
   </div>
   <div class="warmup" id="warmupBar"><div class="warmup-fill" id="warmupFill" style="width:0%"></div></div>
-  <div class="hint" id="vncHint">⚠ Abra o <a href="/vnc.html">VNC</a> e faça login manual no Binomo antes de iniciar o bot.</div>
+  <div class="hint" id="vncHint">Abra o <a href="/vnc.html" target="_blank">VNC</a> e faca login manual no Binomo. Apos o login, volte aqui e clique Iniciar.</div>
 
   <div class="main-scroll">
     <!-- STATS -->
     <div class="stats">
-      <div class="card"><div class="label">Win Rate</div><div class="value" id="statWinRate">—</div><div class="sub" id="statWL">0W / 0L</div></div>
+      <div class="card"><div class="label">Win Rate</div><div class="value" id="statWinRate">---</div><div class="sub" id="statWL">0W / 0L</div></div>
       <div class="card"><div class="label">Lucro Total</div><div class="value" id="statNet">R$ 0.00</div><div class="sub" id="statTotalTrades">0 trades</div></div>
       <div class="card"><div class="label">Hoje</div><div class="value" id="statTradesToday">0</div><div class="sub" id="statLossesToday">Perdas: R$ 0.00</div></div>
-      <div class="card"><div class="label">Seq. Perdas</div><div class="value val-red" id="statConsecLosses">0</div><div class="sub" id="statGaleInfo">Gale: 0 níveis</div></div>
-      <div class="card"><div class="label">IA Status</div><div class="value val-purple" id="statAiStatus" style="color:var(--purple)">Off</div><div class="sub" id="statAiModel">—</div></div>
+      <div class="card"><div class="label">Seq. Perdas</div><div class="value val-red" id="statConsecLosses">0</div><div class="sub" id="statGaleInfo">Gale: 0 niveis</div></div>
+      <div class="card"><div class="label">IA Status</div><div class="value val-purple" id="statAiStatus" style="color:var(--purple)">Off</div><div class="sub" id="statAiModel">---</div></div>
     </div>
 
     <!-- CONTENT -->
     <div class="content">
       <div class="left">
         <div class="chart-card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <span style="font-weight:600" id="chartAsset">Z-CRY/IDX</span>
+          <div class="chart-title">
+            <span id="chartAsset">Z-CRY/IDX</span>
             <span class="meta" id="chartTf">TF: 15s</span>
           </div>
           <canvas id="candleChart"></canvas>
@@ -189,39 +205,39 @@ tr:hover { background:rgba(255,255,255,.02); }
 
       <div class="right">
         <div class="card">
-          <div style="font-weight:600;margin-bottom:6px">⚙ Configurações</div>
+          <div class="label" style="margin-bottom:6px">Configuracoes</div>
           <div class="config" id="configGrid">
             <label>Ativo</label>
-            <input class="full" id="cfgAsset" value="Z-CRY/IDX">
+            <input id="cfgAsset" value="Z-CRY/IDX">
             <label>Entrada (R$)</label>
             <input id="cfgEntry" type="number" step="0.5" value="5">
-            <label>Score mínimo</label>
+            <label>Score min</label>
             <input id="cfgScore" type="number" value="80">
-            <label>Expiração (s)</label>
+            <label>Expiracao (s)</label>
             <input id="cfgExp" type="number" value="60">
             <label>TF Candle (s)</label>
             <input id="cfgTf" type="number" value="15">
-            <label>Gale níveis</label>
+            <label>Gale niveis</label>
             <input id="cfgGale" type="number" value="0">
             <label>Gale fator</label>
             <input id="cfgGaleMult" type="number" step="0.1" value="2">
             <label>Cooldown (s)</label>
             <input id="cfgCooldown" type="number" value="15">
-            <label>Take Profit (R$) 0=off</label>
+            <label>Take Profit (R$)</label>
             <input id="cfgProfit" type="number" step="0.5" value="0">
             <label>Max trades/dia</label>
             <input id="cfgMaxTrades" type="number" value="20">
-            <label>Stop-loss (R$) 0=off</label>
+            <label>Stop Loss (R$)</label>
             <input id="cfgStopLoss" type="number" step="0.5" value="100">
             <button class="btn-primary btn-save" onclick="saveSettings()">Salvar</button>
-            <span id="cfgSaved" style="font-size:11px;color:var(--green);grid-column:span 2"></span>
+            <span id="cfgSaved" class="span2" style="font-size:10px;color:var(--green)"></span>
           </div>
         </div>
         <div class="card" id="signalCard" style="display:none;">
-          <div style="font-weight:600;margin-bottom:4px">🎯 Último Sinal</div>
+          <div class="label" style="margin-bottom:3px">Ultimo Sinal</div>
           <div id="signalContent"></div>
         </div>
-        <div class="logs" id="logBox">— aguardando eventos —</div>
+        <div class="logs" id="logBox">--- aguardando eventos ---</div>
       </div>
     </div>
   </div>
@@ -230,9 +246,9 @@ tr:hover { background:rgba(255,255,255,.02); }
 <!-- DIAGNOSTIC MODAL -->
 <div id="diagModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center">
   <div class="card" style="max-width:500px;width:90vw;max-height:80vh;overflow-y:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <b>📊 Diagnóstico</b>
-      <div><button class="btn-ghost btn-sm" onclick="closeDiagnostic()">✕</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b>Diagnostico</b>
+      <div><button class="btn-ghost btn-sm" onclick="closeDiagnostic()">X</button></div>
     </div>
     <div id="diagContent" style="font-size:11px;display:flex;flex-direction:column;gap:4px"></div>
   </div>
