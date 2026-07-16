@@ -90,7 +90,7 @@ function initApp() {
   socket.on('signal', (d) => showSignal(d));
   socket.on('trade', (t) => { addTradeRow(t, true); refreshStats(); });
   socket.on('result', (t) => { updateTradeResult(t); refreshStats(); });
-  socket.on('balance', (b) => { document.getElementById('balanceValue').textContent = `R$ ${b.toFixed(2)}`; });
+  socket.on('balance', (b) => { if (b && b.balance != null) document.getElementById('balanceValue').textContent = 'R$ ' + Number(b.balance).toFixed(2); });
   socket.on('warmup', (d) => {
     var pct = d.target > 0 ? Math.round(d.candles / d.target * 100) : 0;
     var bar = document.getElementById('warmupBar');
@@ -230,14 +230,14 @@ function addTradeRow(t, prepend) {
   var tbody = document.getElementById('tradeBody');
   if (!tbody.children.length || tbody.children[0].textContent.includes('Nenhum')) tbody.innerHTML = '';
   var dir = t.direction === 'CALL' ? '<span class="badge badge-call">CALL</span>' : '<span class="badge badge-put">PUT</span>';
-  var gale = t.martingaleLevel > 0 ? '<span class="badge badge-gale">G' + t.martingaleLevel + '</span>' : '—';
-  var ai = t.aiApproved ? '<span class="badge badge-ai">IA</span>' : '—';
+  var gale = t.martingale_level > 0 ? '<span class="badge badge-gale">G' + t.martingale_level + '</span>' : '—';
+  var ai = t.ai_approved ? '<span class="badge badge-ai">IA</span>' : '—';
   var result = t.status === 'WIN' ? '<span class="badge badge-win">WIN</span>' : t.status === 'LOSS' ? '<span class="badge badge-loss">LOSS</span>' : t.status || '—';
-  var time = t.time ? new Date(t.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  var time = t.placed_at ? new Date(t.placed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
   var row = '<tr>' +
     '<td>' + time + '</td>' +
     '<td>' + dir + '</td>' +
-    '<td>R$ ' + (t.entryValue || 0).toFixed(2) + '</td>' +
+    '<td>R$ ' + (t.entry_value || 0).toFixed(2) + '</td>' +
     '<td>' + (t.score || '—') + '</td>' +
     '<td>' + gale + '</td>' +
     '<td>' + ai + '</td>' +
