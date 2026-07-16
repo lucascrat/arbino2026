@@ -130,7 +130,10 @@ export class ApiServer {
     this.app.use((req, res, next) => {
       const p = req.path;
       const isApi = p.startsWith('/api/');
-      const isPublic = ['/api/auth/login', '/api/health', '/api/vnc/health'].includes(p);
+      const isPublic = ['/api/auth/login', '/api/health', '/api/vnc/health'].includes(p)
+        || p === '/api/events'
+        || (p === '/api/settings' && req.method === 'GET')
+        || p === '/api/analytics';
       if (!isApi || isPublic) { next(); return; }
       const token = (req.headers.authorization || '').replace('Bearer ', '');
       if (!token || !this.authTokens.has(token)) {
