@@ -81,8 +81,8 @@ button { cursor:pointer; border:none; border-radius:var(--radius); padding:8px 1
 
 /* ===== LEFT PANEL ===== */
 .left { display:flex; flex-direction:column; gap:8px; min-width:0; }
-.chart-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:10px; min-height:260px; }
-.chart-card canvas { width:100% !important; }
+.chart-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:10px; display:flex; flex-direction:column; height:280px; }
+.chart-card canvas { width:100% !important; flex:1; min-height:0; }
 .table-wrap { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow-x:auto; max-height:260px; overflow-y:auto; }
 table { width:100%; border-collapse:collapse; font-size:11px; }
 th { position:sticky; top:0; background:var(--card); padding:6px 8px; text-align:left; color:var(--muted); font-weight:600; border-bottom:1px solid var(--border); white-space:nowrap; }

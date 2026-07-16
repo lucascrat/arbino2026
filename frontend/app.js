@@ -45,6 +45,8 @@ window.doLogin = async function() {
 function doLogout() {
   authToken = '';
   sessionStorage.removeItem('arb_token');
+  if (socket) { socket.disconnect(); socket = null; }
+  appInited = false;
   document.getElementById('loginOverlay').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
 }
@@ -64,14 +66,20 @@ if (authToken) {
 var botRunning = false;
 var socket;
 var chart;
+var appInited = false;
 
 function initApp() {
-  if (!authToken) return;
+  if (appInited || !authToken) return;
+  appInited = true;
   // Socket.IO (passa token via auth)
   socket = io({ auth: { token: authToken }, transports: ['websocket', 'polling'] });
 
   socket.on('connect', () => {
     document.getElementById('sysStatus').innerHTML = '<span class="dot green"></span> Conectado';
+  });
+  socket.on('connect_error', (err) => {
+    document.getElementById('sysStatus').innerHTML = '<span class="dot red"></span> Erro: ' + (err.message || 'socket');
+    addLog('error', 'Socket.IO: ' + err.message);
   });
   socket.on('disconnect', () => {
     document.getElementById('sysStatus').innerHTML = '<span class="dot red"></span> Offline';
