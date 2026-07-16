@@ -1,462 +1,271 @@
-// Arbinomo Frontend — Dashboard
-const socket = io();
-let candleChart = null;
-let botRunning = false;
-
-// Escuta eventos do Electron (auto-start do bot)
-if (window.electronAPI) {
-  window.electronAPI.onBotStarted(() => {
-    botRunning = true;
-    document.getElementById('btnStart').disabled = true;
-    document.getElementById('btnStop').disabled = false;
-    updateStatusBadge(true);
-    addLog('info', 'Bot iniciado automaticamente');
-  });
-  window.electronAPI.onBotStopped(() => {
-    botRunning = false;
-    document.getElementById('btnStart').disabled = false;
-    document.getElementById('btnStop').disabled = true;
-    updateStatusBadge(false);
-    addLog('info', 'Bot parado');
-  });
-  window.electronAPI.onBotLog((msg) => {
-    addLog('info', msg, 'BOT');
+// ===== PWA =====
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
 
-// ===== Socket Events =====
-socket.on('connect', () => {
-  console.log('Conectado ao backend');
-  addLog('info', 'Dashboard conectado ao backend');
-  const el = document.getElementById('sysSocket');
-  if (el) { el.className = 'sys-item sys-socket connected'; el.innerHTML = '🔌 Conectado'; }
-});
+// ===== AUTH =====
+var authToken = sessionStorage.getItem('arb_token') || '';
 
-socket.on('disconnect', () => {
-  const el = document.getElementById('sysSocket');
-  if (el) { el.className = 'sys-item sys-socket disconnected'; el.innerHTML = '🔌 Desconectado'; }
-});
+function getToken() { return authToken; }
 
-socket.on('log', (data) => {
-  addLog(data.level, data.message, data.service);
-});
+async function api(path, opts = {}) {
+  var h = opts.headers || {};
+  h['Authorization'] = 'Bearer ' + authToken;
+  h['Content-Type'] = h['Content-Type'] || 'application/json';
+  var res = await fetch(path, { ...opts, headers: h });
+  if (res.status === 401) { doLogout(); throw new Error('Sessao expirada'); }
+  return res;
+}
 
-socket.on('candle', (candle) => {
-  updateChart(candle);
-});
-
-socket.on('state', (state) => {
-  updateState(state);
-});
-
-socket.on('signal', (data) => {
-  showSignal(data);
-});
-
-socket.on('trade', (trade) => {
-  addTradeRow(trade);
-  refreshStats();
-  refreshTradeCount();
-});
-
-socket.on('result', (trade) => {
-  updateTradeResult(trade);
-  refreshStats();
-  refreshTradeCount();
-});
-
-socket.on('balance', (data) => {
-  document.getElementById('balanceValue').textContent = `R$ ${data.balance.toFixed(2)}`;
-});
-
-socket.on('warmup', (data) => {
-  const bar = document.getElementById('warmupBar');
-  const fill = document.getElementById('warmupFill');
-  const count = document.getElementById('warmupCount');
-  if (!bar || !fill || !count) return;
-  if (data.candles >= data.target) {
-    bar.style.display = 'none';
-    document.getElementById('statusText').textContent = 'Rodando';
-    return;
-  }
-  bar.style.display = 'flex';
-  if (data.candles === 0 && document.getElementById('vncHint')?.classList.contains('hint-visible')) {
-    document.getElementById('statusText').textContent = 'Aguardando login via VNC...';
-  } else {
-    document.getElementById('statusText').textContent = 'Analisando...';
-  }
-  const pct = Math.min(100, Math.round((data.candles / data.target) * 100));
-  fill.style.width = pct + '%';
-  count.textContent = `${data.candles}/${data.target} candles`;
-});
-
-// ===== Bot Control =====
-async function startBot() {
-  if (window.electronAPI?.startBot) {
-    const res = await window.electronAPI.startBot('trade');
-    if (res.ok) {
-      botRunning = true;
-      document.getElementById('btnStart').disabled = true;
-      document.getElementById('btnStop').disabled = false;
-      updateStatusBadge(true);
-      addLog('info', 'Bot iniciado via Electron');
-    } else {
-      addLog('warn', res.message);
-    }
-    return;
-  }
+window.doLogin = async function() {
+  var user = document.getElementById('loginUser').value;
+  var pass = document.getElementById('loginPass').value;
   try {
-    const hint = document.getElementById('vncHint');
-    if (hint) hint.classList.add('hint-visible');
-
-    const res = await fetch('/api/bot/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'trade' }),
+    var res = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, password })
     });
-    const data = await res.json();
+    var data = await res.json();
     if (data.ok) {
-      botRunning = true;
+      authToken = data.token;
+      sessionStorage.setItem('arb_token', authToken);
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      initApp();
+    } else {
+      document.getElementById('loginErr').style.display = 'block';
+    }
+  } catch(e) {
+    document.getElementById('loginErr').style.display = 'block';
+  }
+};
+
+function doLogout() {
+  authToken = '';
+  sessionStorage.removeItem('arb_token');
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+// Enter key on password field
+document.getElementById('loginPass').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+
+// Auto-login if token exists
+if (authToken) {
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+// ===== APP INIT =====
+var botRunning = false;
+var socket;
+var chart;
+
+function initApp() {
+  if (!authToken) return;
+  // Socket.IO (passa token via auth)
+  socket = io({ auth: { token: authToken }, transports: ['websocket', 'polling'] });
+
+  socket.on('connect', () => {
+    document.getElementById('sysStatus').innerHTML = '<span class="dot green"></span> Conectado';
+  });
+  socket.on('disconnect', () => {
+    document.getElementById('sysStatus').innerHTML = '<span class="dot red"></span> Offline';
+  });
+  socket.on('log', (d) => addLog(d.level, d.message, d.service));
+  socket.on('candle', (c) => updateChart(c));
+  socket.on('state', (s) => updateState(s));
+  socket.on('signal', (d) => showSignal(d));
+  socket.on('trade', (t) => { addTradeRow(t, true); refreshStats(); });
+  socket.on('result', (t) => { updateTradeResult(t); refreshStats(); });
+  socket.on('balance', (b) => { document.getElementById('balanceValue').textContent = `R$ ${b.toFixed(2)}`; });
+  socket.on('warmup', (d) => {
+    var pct = d.target > 0 ? Math.round(d.candles / d.target * 100) : 0;
+    var bar = document.getElementById('warmupBar');
+    bar.classList.add('show');
+    document.getElementById('warmupFill').style.width = pct + '%';
+    if (pct >= 100) bar.classList.remove('show');
+  });
+  socket.on('diagnostic', updateDiagnostic);
+
+  initChart();
+  refreshStats();
+  loadTrades();
+  fetchState();
+  fetchSystemStatus();
+  setInterval(refreshStats, 10000);
+  setInterval(fetchState, 5000);
+  setInterval(fetchSystemStatus, 15000);
+}
+
+if (authToken) initApp();
+
+// ===== BOT CONTROLS =====
+async function startBot() {
+  try {
+    var res = await api('/api/bot/start', { method: 'POST', body: JSON.stringify({ mode: 'trade' }) });
+    var data = await res.json();
+    if (data.ok) {
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStop').disabled = false;
       updateStatusBadge(true);
-      addLog('info', 'Navegador aberto no VNC. Faca login manual no Binomo pela janela do VNC.');
-      window.open('/vnc.html', '_blank');
+      addLog('info', 'Bot iniciado');
+      document.getElementById('vncHint').classList.add('show');
     }
-  } catch (err) {
-    addLog('error', 'Erro ao iniciar bot: ' + err.message);
-  }
+  } catch(e) { addLog('error', 'Erro ao iniciar: ' + e.message); }
 }
 
 async function stopBot() {
-  // Se estiver no Electron, usa IPC
-  if (window.electronAPI?.stopBot) {
-    const res = await window.electronAPI.stopBot();
-    if (res.ok) {
-      botRunning = false;
-      document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStop').disabled = true;
-      updateStatusBadge(false);
-      addLog('info', 'Bot parado via Electron');
-    } else {
-      addLog('warn', res.message);
-    }
-    return;
-  }
   try {
-    const res = await fetch('/api/bot/stop', { method: 'POST' });
-    const data = await res.json();
-    if (data.ok) {
-      botRunning = false;
-      document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStop').disabled = true;
-      updateStatusBadge(false);
-    }
-  } catch (err) {
-    addLog('error', 'Erro ao parar bot: ' + err.message);
-  }
+    await api('/api/bot/stop', { method: 'POST' });
+    document.getElementById('btnStart').disabled = false;
+    document.getElementById('btnStop').disabled = true;
+    updateStatusBadge(false);
+    document.getElementById('vncHint').classList.remove('show');
+    addLog('info', 'Bot parado');
+  } catch(e) { addLog('error', 'Erro ao parar: ' + e.message); }
 }
 
 function updateStatusBadge(running) {
-  const badge = document.getElementById('statusBadge');
-  const text = document.getElementById('statusText');
-  const bar = document.getElementById('warmupBar');
-  if (running) {
-    badge.classList.add('running');
-    text.textContent = 'Rodando';
-  } else {
-    badge.classList.remove('running');
-    text.textContent = 'Parado';
-    if (bar) bar.style.display = 'none';
-  }
+  var dot = document.getElementById('statusDot');
+  dot.className = 'status-badge' + (running ? ' running' : '');
+  var warmup = document.getElementById('warmupBar');
+  if (!running) { warmup.classList.remove('show'); document.getElementById('warmupFill').style.width = '0%'; }
 }
 
-function updateState(state) {
-  document.getElementById('statTradesToday').textContent = state.tradesToday || 0;
-  document.getElementById('statLossesToday').textContent = `Perdas: R$ ${(state.lossesToday || 0).toFixed(2)}`;
-  document.getElementById('statConsecLosses').textContent = state.consecutiveLosses || 0;
-  document.getElementById('statGaleInfo').textContent = `Gale: ${state.martingaleLevels} níveis`;
-  document.getElementById('chartAsset').textContent = state.asset;
-  document.getElementById('chartTf').textContent = `TF: ${state.candleTimeframe}s`;
-  const aiEl = document.getElementById('statAiStatus');
-  aiEl.textContent = state.aiEnabled ? 'Ativa' : 'Off';
-  aiEl.style.color = state.aiEnabled ? 'var(--purple)' : 'var(--text-muted)';
-  document.getElementById('statAiModel').textContent = state.aiModel || '—';
-  if (state.balance) {
-    document.getElementById('balanceValue').textContent = `R$ ${state.balance.toFixed(2)}`;
-  }
-  // Atualiza botões
-  if (state.running !== undefined) {
-    botRunning = state.running;
+async function setupLogin() {
+  try {
+    var res = await api('/api/setup/login', { method: 'POST' });
+    var data = await res.json();
+    addLog('info', data.message || 'Navegador aberto para login');
+    window.open('/vnc.html', '_blank');
+  } catch(e) { addLog('error', 'Setup: ' + e.message); }
+}
+
+// ===== STATE =====
+function updateState(s) {
+  if (s.running !== undefined) {
+    botRunning = s.running;
     document.getElementById('btnStart').disabled = botRunning;
     document.getElementById('btnStop').disabled = !botRunning;
     updateStatusBadge(botRunning);
   }
+  document.getElementById('statTradesToday').textContent = s.tradesToday || 0;
+  document.getElementById('statLossesToday').textContent = 'Perdas: R$ ' + (s.lossesToday || 0).toFixed(2);
+  document.getElementById('statConsecLosses').textContent = s.consecutiveLosses || 0;
+  document.getElementById('statGaleInfo').textContent = 'Gale: ' + (s.martingaleLevels || 0) + ' níveis';
+  document.getElementById('chartAsset').textContent = s.asset;
+  document.getElementById('chartTf').textContent = 'TF: ' + (s.candleTimeframe || '—') + 's';
+  var ai = document.getElementById('statAiStatus');
+  ai.textContent = s.aiEnabled ? 'Ativa' : 'Off';
+  ai.style.color = s.aiEnabled ? 'var(--purple)' : 'var(--muted)';
+  document.getElementById('statAiModel').textContent = s.aiModel || '—';
+  if (s.balance) document.getElementById('balanceValue').textContent = 'R$ ' + s.balance.toFixed(2);
   // Preencher config
-  if (state.asset) document.getElementById('cfgAsset').value = state.asset;
-  if (state.entryValue) document.getElementById('cfgEntry').value = state.entryValue;
-  if (state.minSignalScore) document.getElementById('cfgScore').value = state.minSignalScore;
-  if (state.expiration) document.getElementById('cfgExp').value = state.expiration;
-  if (state.candleTimeframe) document.getElementById('cfgTf').value = state.candleTimeframe;
-  if (state.martingaleLevels !== undefined) document.getElementById('cfgGale').value = state.martingaleLevels;
-  if (state.martingaleMultiplier) document.getElementById('cfgGaleMult').value = state.martingaleMultiplier;
-  if (state.cooldownSeconds) document.getElementById('cfgCooldown').value = state.cooldownSeconds;
-  if (state.maxDailyProfit !== undefined) document.getElementById('cfgProfit').value = state.maxDailyProfit;
-  if (state.maxDailyTrades !== undefined) document.getElementById('cfgMaxTrades').value = state.maxDailyTrades;
-  if (state.maxDailyLoss !== undefined) document.getElementById('cfgStopLoss').value = state.maxDailyLoss;
+  if (s.asset) document.getElementById('cfgAsset').value = s.asset;
+  if (s.entryValue != null) document.getElementById('cfgEntry').value = s.entryValue;
+  if (s.minSignalScore != null) document.getElementById('cfgScore').value = s.minSignalScore;
+  if (s.expiration != null) document.getElementById('cfgExp').value = s.expiration;
+  if (s.candleTimeframe != null) document.getElementById('cfgTf').value = s.candleTimeframe;
+  if (s.martingaleLevels != null) document.getElementById('cfgGale').value = s.martingaleLevels;
+  if (s.martingaleMultiplier != null) document.getElementById('cfgGaleMult').value = s.martingaleMultiplier;
+  if (s.cooldownSeconds != null) document.getElementById('cfgCooldown').value = s.cooldownSeconds;
+  if (s.maxDailyProfit != null) document.getElementById('cfgProfit').value = s.maxDailyProfit;
+  if (s.maxDailyTrades != null) document.getElementById('cfgMaxTrades').value = s.maxDailyTrades;
+  if (s.maxDailyLoss != null) document.getElementById('cfgStopLoss').value = s.maxDailyLoss;
 }
 
-async function toggleAi() {
-  try {
-    const res = await fetch('/api/settings');
-    const settings = await res.json();
-    const current = settings.aiEnabled === 'true';
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aiEnabled: (!current).toString() }),
-    });
-    addLog('info', `IA ${!current ? 'ativada' : 'desativada'} (próximo restart do bot)`);
-    fetchState();
-  } catch (err) {
-    addLog('error', 'Erro ao toggle IA: ' + err.message);
-  }
+async function fetchState() {
+  try { var r = await api('/api/state'); updateState(await r.json()); } catch(e) {}
 }
 
-// ===== Stats =====
+// ===== STATS =====
 async function refreshStats() {
   try {
-    const res = await fetch('/api/stats');
-    const data = await res.json();
-    const s = data.overall;
-    document.getElementById('statWinRate').textContent = s.winRate.toFixed(1) + '%';
-    document.getElementById('statWinLoss').textContent = `${s.wins}W / ${s.losses}L`;
-    document.getElementById('statProfit').textContent = `R$ ${s.netProfit.toFixed(2)}`;
-    document.getElementById('statProfit').style.color = s.netProfit >= 0 ? 'var(--green)' : 'var(--red)';
-    document.getElementById('statTotalTrades').textContent = `${s.totalTrades} trades`;
-  } catch (err) {
-    console.error('Erro ao buscar stats:', err);
-  }
+    var r = await api('/api/stats'); var s = await r.json();
+    if (s.overall) {
+      var o = s.overall;
+      var wr = o.total > 0 ? ((o.wins / o.total) * 100).toFixed(0) : '—';
+      document.getElementById('statWinRate').textContent = wr + '%';
+      document.getElementById('statWL').textContent = o.wins + 'W / ' + o.losses + 'L';
+      var net = (o.totalProfit || 0).toFixed(2);
+      var nel = document.getElementById('statNet');
+      nel.textContent = 'R$ ' + net;
+      nel.className = 'value ' + (parseFloat(net) >= 0 ? 'val-green' : 'val-red');
+      document.getElementById('statTotalTrades').textContent = o.total + ' trades';
+    }
+  } catch(e) {}
 }
 
-// ===== Trades Table =====
+// ===== TRADES =====
 async function loadTrades() {
   try {
-    const res = await fetch('/api/trades?limit=100');
-    const trades = await res.json();
-    const body = document.getElementById('tradeBody');
-    body.innerHTML = '';
-    if (trades.length === 0) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="8">Nenhum trade ainda</td></tr>';
-    } else {
-      trades.forEach((t) => addTradeRow(t, false));
-    }
-    refreshTradeCount();
-  } catch (err) {
-    console.error('Erro ao carregar trades:', err);
-  }
+    var r = await api('/api/trades?limit=50'); var data = await r.json();
+    var tbody = document.getElementById('tradeBody');
+    if (!data.trades || !data.trades.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Nenhum trade</td></tr>'; return; }
+    tbody.innerHTML = '';
+    data.trades.forEach(function(t) { addTradeRow(t, false); });
+  } catch(e) {}
 }
 
-function refreshTradeCount() {
-  const body = document.getElementById('tradeBody');
-  const count = body.querySelectorAll('tr:not(.empty-row)').length;
-  document.getElementById('tradeCount').textContent = `${count} trades`;
+function addTradeRow(t, prepend) {
+  var tbody = document.getElementById('tradeBody');
+  if (!tbody.children.length || tbody.children[0].textContent.includes('Nenhum')) tbody.innerHTML = '';
+  var dir = t.direction === 'CALL' ? '<span class="badge badge-call">CALL</span>' : '<span class="badge badge-put">PUT</span>';
+  var gale = t.martingaleLevel > 0 ? '<span class="badge badge-gale">G' + t.martingaleLevel + '</span>' : '—';
+  var ai = t.aiApproved ? '<span class="badge badge-ai">IA</span>' : '—';
+  var result = t.status === 'WIN' ? '<span class="badge badge-win">WIN</span>' : t.status === 'LOSS' ? '<span class="badge badge-loss">LOSS</span>' : t.status || '—';
+  var time = t.time ? new Date(t.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  var row = '<tr>' +
+    '<td>' + time + '</td>' +
+    '<td>' + dir + '</td>' +
+    '<td>R$ ' + (t.entryValue || 0).toFixed(2) + '</td>' +
+    '<td>' + (t.score || '—') + '</td>' +
+    '<td>' + gale + '</td>' +
+    '<td>' + ai + '</td>' +
+    '<td>' + result + '</td>' +
+    '<td>' + (t.payout != null ? 'R$ ' + t.payout.toFixed(2) : '—') + '</td>' +
+    '</tr>';
+  if (prepend) tbody.insertAdjacentHTML('afterbegin', row);
+  else tbody.insertAdjacentHTML('beforeend', row);
+  if (tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
 }
 
-function addTradeRow(trade, prepend = true) {
-  const body = document.getElementById('tradeBody');
-  if (body.querySelector('.empty-row')) body.innerHTML = '';
-
-  const tr = document.createElement('tr');
-  const time = new Date(trade.placed_at).toLocaleTimeString('pt-BR');
-  const dir = trade.direction === 'CALL'
-    ? '<span class="dir-call">CALL ▲</span>'
-    : '<span class="dir-put">PUT ▼</span>';
-  const gale = trade.martingale_level > 0
-    ? `<span class="gale-badge gale-${trade.martingale_level}">G${trade.martingale_level}</span>`
-    : '<span class="gale-badge gale-0">—</span>';
-  const ai = trade.ai_approved === 1 ? '✅' : trade.ai_approved === 0 ? '❌' : '—';
-  let result = '';
-  if (trade.status === 'WIN') result = '<span class="result-win">WIN</span>';
-  else if (trade.status === 'LOSS') result = '<span class="result-loss">LOSS</span>';
-  else if (trade.status === 'PENDING') result = '<span class="result-pending">⏳</span>';
-  else result = trade.status;
-
-  const payout = trade.payout != null
-    ? `<span style="color:${trade.payout >= 0 ? 'var(--green)' : 'var(--red)'}">R$ ${trade.payout.toFixed(2)}</span>`
-    : '—';
-
-  tr.innerHTML = `
-    <td>${time}</td>
-    <td>${dir}</td>
-    <td>R$ ${trade.entry_value.toFixed(2)}</td>
-    <td>${trade.score}</td>
-    <td>${gale}</td>
-    <td>${ai}</td>
-    <td>${result}</td>
-    <td>${payout}</td>
-  `;
-  if (prepend) body.prepend(tr);
-  else body.appendChild(tr);
-  refreshTradeCount();
-}
-
-function updateTradeResult(trade) {
-  // Atualiza a primeira linha (trade mais recente)
-  const body = document.getElementById('tradeBody');
-  const firstRow = body.querySelector('tr');
-  if (firstRow) {
-    const cells = firstRow.querySelectorAll('td');
-    if (cells.length >= 8) {
-      let result = '';
-      if (trade.status === 'WIN') result = '<span class="result-win">WIN</span>';
-      else if (trade.status === 'LOSS') result = '<span class="result-loss">LOSS</span>';
-      else result = trade.status;
+function updateTradeResult(t) {
+  var rows = document.querySelectorAll('#tradeBody tr');
+  for (var i = 0; i < rows.length; i++) {
+    var cells = rows[i].querySelectorAll('td');
+    if (cells.length > 6) {
+      var result = t.status === 'WIN' ? '<span class="badge badge-win">WIN</span>' : t.status === 'LOSS' ? '<span class="badge badge-loss">LOSS</span>' : t.status || '—';
       cells[6].innerHTML = result;
-      if (trade.payout != null) {
-        cells[7].innerHTML = `<span style="color:${trade.payout >= 0 ? 'var(--green)' : 'var(--red)'}">R$ ${trade.payout.toFixed(2)}</span>`;
-      }
+      cells[7].textContent = t.payout != null ? 'R$ ' + t.payout.toFixed(2) : '—';
+      break;
     }
   }
 }
 
-// ===== Signal Display =====
-function showSignal(data) {
-  const content = document.getElementById('signalContent');
-  const s = data.signal;
-  const ai = data.aiVerdict;
-  if (!s) {
-    content.innerHTML = '<p class="muted">Aguardando sinal...</p>';
-    return;
+// ===== SIGNAL =====
+function showSignal(d) {
+  var card = document.getElementById('signalCard'); card.style.display = 'block';
+  var el = document.getElementById('signalContent');
+  var dirCls = d.signal.direction === 'CALL' ? 'signal-call' : 'signal-put';
+  var tags = (d.signal.patterns || []).map(function(p) { return '<span class="tag">' + p + '</span>'; }).join('');
+  var reasons = (d.signal.reasons || []).join(' | ');
+  var aiBlock = '';
+  if (d.aiVerdict) {
+    var cls = d.executed ? 'ai-yes' : 'ai-no';
+    aiBlock = '<div class="ai-block ' + cls + '">IA: ' + (d.executed ? 'APROVOU' : 'BLOQUEOU') + ' (conf: ' + d.aiVerdict.confidence + ' risk: ' + d.aiVerdict.risk + ')</div>';
   }
-  const dirClass = s.direction === 'CALL' ? 'call' : 'put';
-  const dirIcon = s.direction === 'CALL' ? '▲ CALL' : '▼ PUT';
-  const patterns = (s.patterns || []).map(p => `<span class="signal-pattern">${p}</span>`).join('');
-  let aiHtml = '';
-  if (ai) {
-    const aiClass = ai.approve ? 'approved' : 'blocked';
-    const aiIcon = ai.approve ? '✅' : '❌';
-    aiHtml = `<div class="signal-ai ${aiClass}">${aiIcon} IA: conf=${ai.confidence}% risk=${ai.risk} — ${ai.reasoning}</div>`;
-  }
-  const executed = data.executed ? '<span style="color:var(--green)">Executado</span>' : '<span style="color:var(--red)">Bloqueado</span>';
-  content.innerHTML = `
-    <div class="signal-direction ${dirClass}">${dirIcon}</div>
-    <div class="signal-score">Score: <b>${s.score}/100</b> — ${executed}</div>
-    <div class="signal-patterns">${patterns}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${(s.reasons || []).join(' | ')}</div>
-    ${aiHtml}
-  `;
+  el.innerHTML = '<div class="signal ' + dirCls + '"><b>' + d.signal.direction + '</b> score=' + d.signal.score + '<br>' + tags + '<br>' + reasons + aiBlock + '</div>';
 }
 
-// ===== Logs =====
-function addLog(level, message, svc) {
-  const container = document.getElementById('logContainer');
-  if (container.querySelector('.log-empty')) container.innerHTML = '';
-  const time = new Date().toLocaleTimeString('pt-BR');
-  const line = document.createElement('div');
-  line.className = `log-line log-${level}`;
-  const serviceTag = svc ? `[${svc}] ` : '';
-  line.innerHTML = `<span class="log-time">${time}</span> ${serviceTag}${message}`;
-  container.appendChild(line);
-  // Limita a 200 linhas
-  while (container.children.length > 200) container.removeChild(container.firstChild);
-  container.scrollTop = container.scrollHeight;
-}
-
-function openDiagnostic() {
-  const modal = document.getElementById('diagModal');
-  const body = document.getElementById('diagBody');
-  modal.style.display = 'flex';
-  body.innerHTML = '<p class="muted">Carregando diagnóstico...</p>';
-  fetch('/api/diagnose').then(r => r.json()).then(data => {
-    const d = data.lastDiagnostic;
-    const health = data.health;
-    let html = '<div class="diag-row"><span class="diag-label">Bot rodando</span><span class="diag-value ' + (data.botRunning ? 'ok' : 'err') + '">' + (data.botRunning ? 'Sim' : 'Não') + '</span></div>';
-    html += '<div class="diag-row"><span class="diag-label">Server uptime</span><span class="diag-value">' + formatUptime(health.uptime) + '</span></div>';
-    if (d) {
-      const wsOk = d.wsFramesReceived > 0;
-      const tickOk = d.lastTickTime !== null && (Date.now() - d.lastTickTime < 30000);
-      const candleOk = d.candleCount > 0;
-      html += '<div class="diag-row"><span class="diag-label">WS frames recebidos</span><span class="diag-value ' + (wsOk ? 'ok' : 'err') + '">' + d.wsFramesReceived + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">WS frames enviados</span><span class="diag-value">' + d.wsFramesSent + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Con sockets ativas</span><span class="diag-value ' + (d.socketCount > 0 ? 'ok' : 'err') + '">' + d.socketCount + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Candles gerados</span><span class="diag-value ' + (candleOk ? 'ok' : 'err') + '">' + d.candleCount + '<span style="font-weight:400;color:var(--text-muted);font-size:11px"> / 30 necessário</span></span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Último preço</span><span class="diag-value ' + (d.lastPrice !== null ? 'ok' : 'err') + '">' + (d.lastPrice !== null ? d.lastPrice.toFixed(6) : 'Nenhum') + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Último tick há</span><span class="diag-value ' + (tickOk ? 'ok' : 'err') + '">' + (d.lastTickTime ? formatUptime((Date.now() - d.lastTickTime) / 1000) + ' atrás' : 'Nunca') + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Asset</span><span class="diag-value">' + d.asset + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Sessão pronta</span><span class="diag-value ' + (d.sessionReady ? 'ok' : 'err') + '">' + (d.sessionReady ? 'Sim' : 'Não') + '</span></div>';
-      html += '<div class="diag-row"><span class="diag-label">Bot uptime</span><span class="diag-value">' + formatUptime(d.uptime) + '</span></div>';
-      if (d.pageUrl) {
-        html += '<div class="diag-row"><span class="diag-label">URL da página</span><span class="diag-value" style="font-size:10px;word-break:break-all">' + escapeHtml(d.pageUrl) + '</span></div>';
-      }
-      if (d.pageTitle) {
-        html += '<div class="diag-row"><span class="diag-label">Título da página</span><span class="diag-value">' + escapeHtml(d.pageTitle) + '</span></div>';
-      }
-      if (d.lastFramePreview) {
-        html += '<div class="diag-row" style="flex-direction:column;align-items:stretch"><span class="diag-label">Último frame WS:</span><div class="diag-frame">' + escapeHtml(d.lastFramePreview) + '</div></div>';
-      }
-    } else {
-      html += '<p class="muted" style="margin-top:8px">Nenhum diagnóstico do bot disponível. Inicie o bot para ver dados.</p>';
-    }
-    body.innerHTML = html;
-  }).catch(err => {
-    body.innerHTML = '<p class="err" style="color:var(--red)">Erro ao carregar: ' + err.message + '</p>';
-  });
-}
-
-function closeDiagnostic() {
-  document.getElementById('diagModal').style.display = 'none';
-}
-
-async function setupLogin() {
-  const btn = document.getElementById('btnSetupLogin');
-  btn.disabled = true;
-  btn.textContent = 'Abrindo navegador...';
-  try {
-    const res = await fetch('/api/setup/login', { method: 'POST' });
-    const data = await res.json();
-    addLog('info', data.message || 'Setup iniciado');
-    if (data.ok) {
-      // Abre VNC automaticamente
-      window.open('/vnc.html', '_blank');
-      btn.textContent = '🔑 Setup Ativo';
-      btn.onclick = stopSetupLogin;
-    } else {
-      btn.disabled = false;
-      btn.textContent = '🔑 Setup Login';
-    }
-  } catch (err) {
-    addLog('error', 'Erro ao iniciar setup: ' + err.message);
-    btn.disabled = false;
-    btn.textContent = '🔑 Setup Login';
-  }
-}
-
-async function stopSetupLogin() {
-  const btn = document.getElementById('btnSetupLogin');
-  btn.textContent = 'Fechando...';
-  try {
-    await fetch('/api/setup/stop', { method: 'POST' });
-    addLog('info', 'Setup encerrado');
-  } catch {}
-  btn.textContent = '🔑 Setup Login';
-  btn.onclick = setupLogin;
-  btn.disabled = false;
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
-  return div.innerHTML;
-}
-
-function clearLogs() {
-  document.getElementById('logContainer').innerHTML = '<div class="log-empty">Logs aparecerão aqui...</div>';
-}
-
-// ===== Settings =====
+// ===== SETTINGS =====
 async function saveSettings() {
-  const settings = {
+  var settings = {
     asset: document.getElementById('cfgAsset').value,
     entryValue: document.getElementById('cfgEntry').value,
     minSignalScore: document.getElementById('cfgScore').value,
@@ -470,214 +279,97 @@ async function saveSettings() {
     maxDailyLoss: document.getElementById('cfgStopLoss').value,
   };
   try {
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    });
-    const saved = document.getElementById('cfgSaved');
-    saved.textContent = '✓ Salvo!';
-    setTimeout(() => { saved.textContent = ''; }, 2000);
+    await api('/api/settings', { method: 'POST', body: JSON.stringify(settings) });
+    var s = document.getElementById('cfgSaved');
+    s.textContent = 'Salvo! Reinicie o bot para aplicar';
+    setTimeout(function() { s.textContent = ''; }, 3000);
     addLog('info', 'Configurações salvas');
-  } catch (err) {
-    addLog('error', 'Erro ao salvar: ' + err.message);
-  }
+  } catch(e) { addLog('error', 'Erro ao salvar: ' + e.message); }
 }
 
-// ===== Candle Chart =====
+// ===== CHART =====
 function initChart() {
-  const ctx = document.getElementById('candleChart').getContext('2d');
-  candleChart = new Chart(ctx, {
+  var ctx = document.getElementById('candleChart').getContext('2d');
+  chart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        label: 'Preço',
-        data: [],
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59,130,246,0.08)',
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0.1,
-        fill: true,
-      }]
-    },
+    data: { labels: [], datasets: [{ label: 'Preço', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.1)', fill: true, tension: .3, pointRadius: 0 }] },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 200 },
+      responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { display: false },
-        y: {
-          position: 'right',
-          grid: { color: 'rgba(255,255,255,0.05)' },
-          ticks: { color: '#6b7280', font: { size: 10 } },
-        },
+        x: { display: true, ticks: { color: '#6b7280', maxTicksLimit: 10, font: { size: 9 } }, grid: { color: '#1e2638' } },
+        y: { display: true, ticks: { color: '#6b7280', font: { size: 9 }, callback: function(v) { return v.toFixed(6); } }, grid: { color: '#1e2638' } }
       },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#131825',
-          titleColor: '#e4e7ef',
-          bodyColor: '#e4e7ef',
-        },
-      },
-    },
+      plugins: { legend: { display: false } },
+      animation: false
+    }
   });
 }
 
 function updateChart(candle) {
-  if (!candleChart) return;
-  const time = new Date(candle.time).toLocaleTimeString('pt-BR');
-  candleChart.data.labels.push(time);
-  candleChart.data.datasets[0].data.push(candle.close);
-  // Limita a 80 pontos
-  if (candleChart.data.labels.length > 80) {
-    candleChart.data.labels.shift();
-    candleChart.data.datasets[0].data.shift();
-  }
-  candleChart.update('none');
+  if (!chart) return;
+  chart.data.labels.push(new Date(candle.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  chart.data.datasets[0].data.push(candle.close);
+  if (chart.data.labels.length > 80) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+  chart.update('none');
 }
 
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m ${Math.floor(seconds % 60)}s`;
+// ===== LOGS =====
+function addLog(level, msg, svc) {
+  var box = document.getElementById('logBox');
+  if (box.textContent === '— aguardando eventos —') box.textContent = '';
+  var time = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  var cls = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info';
+  box.innerHTML += '<span class="' + cls + '">' + time + ' [' + (svc || '') + '] ' + msg + '</span>\n';
+  if (box.children.length > 150) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
 }
 
-function formatBytes(bytes) {
-  if (bytes < 1024) return bytes + 'B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + 'KB';
-  return (bytes / 1048576).toFixed(1) + 'MB';
+// ===== DIAGNOSTIC =====
+var diagData = null;
+function updateDiagnostic(d) { diagData = d; }
+
+async function openDiagnostic() {
+  document.getElementById('diagModal').style.display = 'flex';
+  try {
+    var r = await api('/api/diagnose'); var d = await r.json();
+    var c = document.getElementById('diagContent');
+    var items = [
+      ['Bot rodando', d.botRunning ? 'Sim' : 'Não', d.botRunning ? 'val-green' : 'val-red'],
+      ['Server uptime', formatUptime(d.serverUptime || 0), ''],
+      ['WS frames recebidos', d.wsFramesReceived || 0, ''],
+      ['WS frames enviados', d.wsFramesSent || 0, ''],
+      ['Sockets ativas', d.socketCount || 0, ''],
+      ['Candles gerados', d.candleCount + ' / 30 necessário', d.candleCount>=30?'val-green':''],
+      ['Último preço', d.lastPrice != null ? d.lastPrice.toFixed(8) : 'Nenhum', ''],
+      ['Último tick há', d.lastTickTime ? Math.round((Date.now()-d.lastTickTime)/1000) + 's' : 'Nunca', ''],
+      ['Asset', d.asset || '—', ''],
+      ['Sessão pronta', d.sessionReady ? 'Sim' : 'Não', ''],
+      ['Bot uptime', formatUptime(d.botUptime || 0), ''],
+      ['URL da página', d.pageUrl || '—', ''],
+    ];
+    c.innerHTML = items.map(function(i) {
+      return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>' + i[0] + '</span><span class="' + (i[2]||'') + '">' + i[1] + '</span></div>';
+    }).join('');
+  } catch(e) {}
 }
 
+function closeDiagnostic() { document.getElementById('diagModal').style.display = 'none'; }
+
+// ===== SYSTEM =====
 async function fetchSystemStatus() {
   try {
-    const res = await fetch('/api/system');
-    const data = await res.json();
-    if (data.status === 'ok') {
-      document.getElementById('sysUptime').textContent = '⏱️ ' + formatUptime(data.uptime);
-      document.getElementById('sysTrades').textContent = '📊 ' + data.db.tradeCount + ' trades';
-    }
-  } catch (err) {
-    console.error('Erro ao buscar system status:', err);
-  }
+    var r = await api('/api/system'); var s = await r.json();
+    var el = document.getElementById('sysStatus');
+    el.innerHTML = '<span class="dot green"></span> ' + formatUptime(s.uptime || 0) + ' | ' + ((s.db && s.db.tradeCount) || 0) + ' trades';
+  } catch(e) {}
 }
 
-// ===== Init =====
-window.addEventListener('DOMContentLoaded', () => {
-  initChart();
-  refreshStats();
-  loadTrades();
-  fetchState();
-  loadAnalytics();
-  fetchSystemStatus();
-  setInterval(refreshStats, 10000);
-  setInterval(fetchState, 5000);
-  setInterval(fetchSystemStatus, 15000);
-});
-
-async function fetchState() {
-  try {
-    const res = await fetch('/api/state');
-    const state = await res.json();
-    updateState(state);
-  } catch (err) {
-    console.error('Erro ao buscar estado:', err);
-  }
-}
-
-// ===== Analytics =====
-async function loadAnalytics() {
-  try {
-    const res = await fetch('/api/analytics');
-    const data = await res.json();
-    renderGaleStats(data.galeStats);
-    renderHourlyGale(data.hourlyGales);
-    renderHourlyPerformance(data.hourlyPerformance);
-    renderMarketStats(data.marketStateStats);
-  } catch (err) {
-    console.error('Erro ao carregar analytics:', err);
-  }
-}
-
-function renderGaleStats(gale) {
-  const el = document.getElementById('analyticsGale');
-  if (!gale.totalGales) {
-    el.innerHTML = '<p class="muted">Nenhum gale registrado ainda</p>';
-    return;
-  }
-  let html = `<div class="analytics-stat"><span class="label">Total de gales</span><span class="value">${gale.totalGales}</span></div>`;
-  html += `<div class="analytics-stat"><span class="label">Nivel medio</span><span class="value">${gale.avgLevel}</span></div>`;
-  html += `<div style="margin-top:4px;font-size:11px;color:var(--text-muted)">Distribuicao:</div>`;
-  const maxCount = Math.max(...Object.values(gale.distribution), 1);
-  for (const [key, count] of Object.entries(gale.distribution)) {
-    const pct = (count / maxCount) * 100;
-    html += `<div class="analytics-stat"><span class="label">${key.replace('nivel_', 'Nivel ')}</span><div class="analytics-bar-wrap"><div class="analytics-bar"><div class="analytics-bar-fill" style="width:${pct}%;background:var(--orange)"></div></div><span class="value">${count}</span></div></div>`;
-  }
-  el.innerHTML = html;
-}
-
-function renderHourlyGale(hourly) {
-  const el = document.getElementById('analyticsHourlyGale');
-  if (!hourly.length) {
-    el.innerHTML = '<p class="muted">Sem dados de gale por horario</p>';
-    return;
-  }
-  const maxCount = Math.max(...hourly.map(h => h.count), 1);
-  let html = '';
-  for (const h of hourly) {
-    const pct = (h.count / maxCount) * 100;
-    const hourLabel = `${h.hour.toString().padStart(2, '0')}:00`;
-    html += `<div class="analytics-stat"><span class="label">${hourLabel}</span><div class="analytics-bar-wrap"><div class="analytics-bar"><div class="analytics-bar-fill" style="width:${pct}%;background:var(--orange)"></div></div><span class="value">${h.count}</span></div></div>`;
-  }
-  el.innerHTML = html;
-}
-
-function renderHourlyPerformance(hourly) {
-  const el = document.getElementById('analyticsHours');
-  if (!hourly.length) {
-    el.innerHTML = '<p class="muted">Sem dados de performance por horario</p>';
-    return;
-  }
-  const sorted = [...hourly].sort((a, b) => b.winRate - a.winRate);
-  const best = sorted.slice(0, 3).filter(h => h.total >= 2);
-  const worst = sorted.slice(-3).reverse().filter(h => h.total >= 2);
-
-  let html = '<div style="margin-bottom:6px"><span style="color:var(--green)">✅ Melhores horarios:</span></div>';
-  if (best.length) {
-    for (const h of best) {
-      html += `<div class="analytics-stat"><span class="label">${h.hour.toString().padStart(2, '0')}:00</span><span class="value green">${h.winRate}% (${h.wins}W/${h.losses}L)</span></div>`;
-    }
-  } else {
-    html += '<p class="muted">Ainda sem dados suficientes</p>';
-  }
-  html += '<div style="margin:6px 0 4px"><span style="color:var(--red)">❌ Piores horarios:</span></div>';
-  if (worst.length) {
-    for (const h of worst) {
-      html += `<div class="analytics-stat"><span class="label">${h.hour.toString().padStart(2, '0')}:00</span><span class="value red">${h.winRate}% (${h.wins}W/${h.losses}L)</span></div>`;
-    }
-  } else {
-    html += '<p class="muted">Ainda sem dados suficientes</p>';
-  }
-  el.innerHTML = html;
-}
-
-function renderMarketStats(marketStats) {
-  const el = document.getElementById('analyticsMarket');
-  if (!marketStats.length) {
-    el.innerHTML = '<p class="muted">Sem dados de mercado ainda (comece a operar para gerar)</p>';
-    return;
-  }
-  const maxCount = Math.max(...marketStats.map(m => m.total), 1);
-  let html = '';
-  for (const m of marketStats) {
-    const pct = (m.total / maxCount) * 100;
-    const stateLabel = m.state.replace(/_/g, ' ');
-    html += `<div class="analytics-stat"><span class="label">${stateLabel}</span><div class="analytics-bar-wrap"><div class="analytics-bar"><div class="analytics-bar-fill" style="width:${pct}%;background:${m.winRate >= 50 ? 'var(--green)' : 'var(--red)'}"></div></div><span class="value ${m.winRate >= 50 ? 'green' : 'red'}">${m.winRate}% (${m.wins}W/${m.losses}L)</span></div></div>`;
-  }
-  el.innerHTML = html;
+// ===== HELPERS =====
+function formatUptime(sec) {
+  var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  var p = [];
+  if (d > 0) p.push(d + 'd');
+  if (h > 0) p.push(h + 'h');
+  p.push(m + 'm');
+  return p.join(' ');
 }

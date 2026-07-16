@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import net from 'node:net';
+import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { AppDatabase } from '../db/Database.js';
 import { service } from '../logger.js';
@@ -76,6 +77,7 @@ export class ApiServer {
   private state: BotState;
   private lastDiagnostic: DiagnosticInfo | null = null;
   private setupProcess: ChildProcess | null = null;
+  private authTokens = new Set<string>();
 
   constructor(port = 3456, db?: AppDatabase) {
     this.port = port;
@@ -120,7 +122,21 @@ export class ApiServer {
     this.app.use((req, res, next) => {
       res.header('Access-Control-Allow-Origin', '*');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
+      next();
+    });
+    // Auth middleware - protege rotas API e dados sensiveis
+    this.app.use((req, res, next) => {
+      const p = req.path;
+      const isApi = p.startsWith('/api/');
+      const isPublic = ['/api/auth/login', '/api/health', '/api/vnc/health'].includes(p);
+      if (!isApi || isPublic) { next(); return; }
+      const token = (req.headers.authorization || '').replace('Bearer ', '');
+      if (!token || !this.authTokens.has(token)) {
+        res.status(401).json({ ok: false, message: 'Nao autenticado' });
+        return;
+      }
       next();
     });
   }
@@ -143,6 +159,17 @@ export class ApiServer {
     // ===== API =====
     this.app.get('/api/health', (_req, res) => {
       res.json({ status: 'ok', uptime: process.uptime() });
+    });
+
+    this.app.post('/api/auth/login', (req, res) => {
+      const { user, password } = req.body || {};
+      if (user === 'admin' && password === '01Deus02@@@@') {
+        const token = crypto.randomBytes(32).toString('hex');
+        this.authTokens.add(token);
+        res.json({ ok: true, token });
+      } else {
+        res.status(401).json({ ok: false, message: 'Credenciais invalidas' });
+      }
     });
 
     this.app.get('/api/system', (_req, res) => {
@@ -569,6 +596,14 @@ export class ApiServer {
   }
 
   private setupSocket(): void {
+    this.io.use((socket, next) => {
+      const token = socket.handshake.auth?.token || socket.handshake.query?.token || '';
+      if (token && this.authTokens.has(token)) {
+        next();
+      } else {
+        next(new Error('Nao autenticado'));
+      }
+    });
     this.io.on('connection', (socket) => {
       log.info('Frontend conectado (socket %s)', socket.id);
       socket.emit('state', this.getState());
