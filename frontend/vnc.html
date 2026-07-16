@@ -3,171 +3,265 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Arbinomo — VNC</title>
+<title>Arbinomo - VNC</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#0a0e17; color:#e4e7ef; font-family:system-ui,sans-serif; display:flex; flex-direction:column; height:100vh; }
   .toolbar { display:flex; align-items:center; gap:12px; padding:10px 16px; background:#131825; border-bottom:1px solid #1e2638; flex-shrink:0; }
-  .toolbar h2 { font-size:15px; font-weight:600; }
-  .toolbar .status { font-size:12px; color:#6b7280; margin-left:auto; }
-  .toolbar .status.connected { color:#22c55e; }
-  .toolbar .status.error { color:#ef4444; }
-  .toolbar .status.loading { color:#f59e0b; }
-  .vnc-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#0a0e17; padding:4px; }
-  canvas { display:block; image-rendering:pixelated; }
+  .status { font-size:12px; color:#6b7280; margin-left:auto; }
+  .status.connected { color:#22c55e; }
+  .status.error { color:#ef4444; }
+  .vnc-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; background:#0a0e17; position:relative; }
+  canvas { position:absolute; top:0; left:0; image-rendering:pixelated; }
   .help { font-size:12px; color:#6b7280; padding:8px 16px; background:#131825; border-top:1px solid #1e2638; flex-shrink:0; }
-  .help a { color:#3b82f6; }
-  .btn { padding:5px 14px; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; font-family:inherit; }
+  .btn { padding:5px 14px; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
   .btn-primary { background:#3b82f6; color:white; }
-  .btn-primary:hover { filter:brightness(1.15); }
   .btn-danger { background:#dc2626; color:white; }
-  .btn-danger:hover { filter:brightness(1.15); }
 </style>
 </head>
 <body>
 <div class="toolbar">
-  <h2>Controle Remoto</h2>
-  <span class="status" id="vncStatus">Inicializando...</span>
-  <button class="btn btn-primary" id="btnConnect" onclick="doConnect()" disabled>Conectar</button>
+  <h2 style="font-size:15px;font-weight:600;">Controle Remoto</h2>
+  <span class="status" id="vncStatus">Desconectado</span>
+  <button class="btn btn-primary" id="btnConnect" onclick="doConnect()">Conectar</button>
   <button class="btn btn-danger" id="btnDisconnect" onclick="doDisconnect()" disabled>Desconectar</button>
 </div>
-<div class="vnc-wrap">
+<div class="vnc-wrap" id="vncWrap">
   <canvas id="vncCanvas"></canvas>
 </div>
 <div class="help">
-  Faca login manual no Binomo. O perfil sera salvo em <code>/data/.binomo-profile</code>.
-  Depois de logado, feche esta pagina e clique "Iniciar" no dashboard.
-  <a href="/" style="margin-left:8px">Voltar ao Dashboard</a>
+  Faca login manual no Binomo. O perfil sera salvo. Depois, feche esta pagina e clique "Iniciar" no dashboard.
+  <a href="/" style="margin-left:8px;color:#3b82f6;">Dashboard</a>
 </div>
 
-<script type="importmap">
-{
-  "imports": {
-    "@novnc/novnc/core/": "/novnc/core/"
-  }
-}
-</script>
-
-<script>
-// Diagnostico de carregamento de modulos
-window.__vncLog = [];
-window.__vncLog.push('Script iniciado');
-document.getElementById('vncStatus').textContent = 'Carregando...';
-</script>
 <script data-cfasync="false">
-// Diagnostico de carregamento de modulos
-window.__vncLog = [];
-window.__vncLog.push('Script iniciado');
-document.getElementById('vncStatus').textContent = 'Carregando...';
-</script>
-<script data-cfasync="false" type="module">
-window.__vncLog.push('Module script executando');
-try {
-  var m = await import('@novnc/novnc/core/rfb.js');
-  window.__vncLog.push('RFB importado com sucesso');
-  window.__RFB = m.default;
-} catch(e) {
-  window.__vncLog.push('ERRO import RFB: ' + e.message);
-  document.getElementById('vncStatus').textContent = 'Erro mod: ' + e.message;
-}
-window.__vncLog.push('Module script concluido');
-document.getElementById('btnConnect').disabled = false;
-document.getElementById('vncStatus').textContent = 'Pronto. Clique Conectar.';
-</script>
-<script>
-window.__vncLog.push('Script classico iniciado');
-
-function setStatus(msg, cls) {
-  var el = document.getElementById('vncStatus');
-  el.textContent = msg;
-  el.className = 'status ' + (cls || '');
-}
-
-window.doConnect = async function() {
-  window.__vncLog.push('doConnect chamado');
+(function() {
+  var ws = null;
+  var canvas = document.getElementById('vncCanvas');
+  var ctx = canvas.getContext('2d');
+  var statusEl = document.getElementById('vncStatus');
   var btnConn = document.getElementById('btnConnect');
   var btnDisc = document.getElementById('btnDisconnect');
-  btnConn.disabled = true;
-  setStatus('Conectando...');
-  var RFB = window.__RFB;
-  if (!RFB) {
-    setStatus('RFB nao carregado', 'error');
-    btnConn.disabled = false;
-    return;
+  var imgData = null;
+  var fbWidth = 0, fbHeight = 0;
+  var recvBuf = new Uint8Array(0);
+
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status ' + (cls || '');
   }
 
-  try {
-    var healthRes = await fetch('/api/vnc/health');
-    var health = await healthRes.json();
-    window.__vncLog.push('Health: ' + JSON.stringify(health));
-    if (!health.ok) {
-      setStatus('x11vnc offline: ' + health.message, 'error');
-      btnConn.disabled = false;
-      return;
-    }
-    setStatus('x11vnc OK. Conectando WebSocket...');
-  } catch (err) {
-    window.__vncLog.push('Health error: ' + err.message);
-    setStatus('Erro ao verificar VNC: ' + err.message, 'error');
-    btnConn.disabled = false;
-    return;
-  }
+  window.doConnect = function() {
+    btnConn.disabled = true;
+    setStatus('Conectando...');
 
-  try {
     var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + window.location.host + '/api/vnc/ws';
-    window.__vncLog.push('Conectando WS: ' + url);
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
 
-    var rfb = new RFB(document.getElementById('vncCanvas'), url, {
-      credentials: { password: '' },
-      shared: true,
-    });
-    window.__rfb = rfb;
-
-    rfb.addEventListener('connect', function() {
-      window.__vncLog.push('RFB connected');
-      setStatus('Conectado', 'connected');
-      btnConn.disabled = true;
+    ws.onopen = function() {
+      setStatus('Conectado. Aguardando handshake...');
       btnDisc.disabled = false;
-    });
+    };
 
-    rfb.addEventListener('disconnect', function(e) {
-      var reason = (e.detail && e.detail.clean) ? 'limpo' : 'erro';
-      window.__vncLog.push('RFB disconnected: ' + reason);
-      var msg = 'Desconectado' + (reason === 'erro' ? ' (erro)' : '');
-      setStatus(msg, 'error');
+    ws.onmessage = function(event) {
+      var data = new Uint8Array(event.data);
+      recvBuf = concatU8(recvBuf, data);
+      processBuffer();
+    };
+
+    ws.onclose = function() {
+      setStatus('Desconectado', 'error');
       btnConn.disabled = false;
       btnDisc.disabled = true;
-    });
+      ws = null;
+    };
 
-    rfb.addEventListener('securityfailure', function(e) {
-      var reason = (e.detail && e.detail.reason) ? e.detail.reason : 'desconhecido';
-      window.__vncLog.push('Security failure: ' + reason);
-      setStatus('Erro seguranca: ' + reason, 'error');
+    ws.onerror = function() {
+      setStatus('Erro de conexao', 'error');
       btnConn.disabled = false;
-    });
+    };
+  };
 
-    setTimeout(function() {
-      if (rfb && rfb._rfbConnectionState !== 'connected') {
-        window.__vncLog.push('Timeout waiting for connection');
-        setStatus('Timeout: VNC nao respondeu', 'error');
-      }
-    }, 15000);
-  } catch (err) {
-    window.__vncLog.push('doConnect error: ' + err.message);
-    setStatus('Erro: ' + err.message, 'error');
-    btnConn.disabled = false;
-  }
-};
-
-window.doDisconnect = function() {
-  window.__vncLog.push('doDisconnect chamado');
-  if (window.__rfb) {
-    window.__rfb.disconnect();
-    window.__rfb = null;
+  window.doDisconnect = function() {
+    if (ws) { ws.close(); ws = null; }
     setStatus('Desconectado');
+    btnConn.disabled = false;
+    btnDisc.disabled = true;
+  };
+
+  var state = 0; // 0=waiting_version, 1=waiting_sec, 2=waiting_auth, 3=waiting_serverinit, 4=ready
+  var secTypes = [];
+
+  function processBuffer() {
+    if (state === 0 && recvBuf.length >= 12) {
+      var ver = new TextDecoder().decode(recvBuf.slice(0,12)).trim();
+      console.log('RFB version:', ver);
+      // Send matching version (we support both 3.3 and 3.8)
+      sendStr('RFB 003.008\n');
+      state = 1;
+      recvBuf = recvBuf.slice(12);
+      processBuffer();
+    } else if (state === 1 && recvBuf.length >= 1) {
+      var numSec = recvBuf[0];
+      if (recvBuf.length >= 1 + numSec) {
+        secTypes = Array.from(recvBuf.slice(1, 1 + numSec));
+        console.log('Security types:', secTypes);
+        var type = secTypes.includes(1) ? 1 : secTypes[0];
+        send([type]);
+        state = 2;
+        recvBuf = recvBuf.slice(1 + numSec);
+        if (type === 1) processBuffer(); // Immediate response for None auth
+      }
+    } else if (state === 2 && recvBuf.length >= 4) {
+      var authResult = (recvBuf[0] << 24) | (recvBuf[1] << 16) | (recvBuf[2] << 8) | recvBuf[3];
+      console.log('Auth result:', authResult);
+      if (authResult !== 0) { setStatus('Auth failed: ' + authResult, 'error'); return; }
+      recvBuf = recvBuf.slice(4);
+      // Send shared flag
+      send([1]);
+      state = 3;
+      processBuffer();
+    } else if (state === 3 && recvBuf.length >= 24) {
+      fbWidth = (recvBuf[0] << 8) | recvBuf[1];
+      fbHeight = (recvBuf[2] << 8) | recvBuf[3];
+      var bpp = recvBuf[4];
+      var depth = recvBuf[5];
+      var trueColor = recvBuf[7];
+      var nameLen = (recvBuf[20] << 24) | (recvBuf[21] << 16) | (recvBuf[22] << 8) | recvBuf[23];
+      var totalSI = 24 + nameLen;
+      if (recvBuf.length >= totalSI) {
+        var dname = new TextDecoder().decode(recvBuf.slice(24, 24 + nameLen));
+        console.log('FB: ' + fbWidth + 'x' + fbHeight + ' bpp=' + bpp + ' depth=' + depth + ' trueColor=' + trueColor + ' name=' + dname);
+        recvBuf = recvBuf.slice(totalSI);
+        setStatus('Framebuffer ' + fbWidth + 'x' + fbHeight + ' - configurando...');
+
+        // SetPixelFormat: 32bpp BGR
+        var pf = new Uint8Array(20);
+        pf[0] = 0; // msg-type
+        // padding [1-3] = 0
+        pf[4] = 32; // bits-per-pixel
+        pf[5] = 24; // depth
+        pf[6] = 0;  // big-endian
+        pf[7] = 1;  // true-colour
+        pf[8] = 0; pf[9] = 255;   // red-max
+        pf[10] = 0; pf[11] = 255;  // green-max
+        pf[12] = 0; pf[13] = 255;  // blue-max
+        pf[14] = 16; // red-shift
+        pf[15] = 8;  // green-shift
+        pf[16] = 0;  // blue-shift
+        send(pf);
+
+        // SetEncodings: Raw only
+        var enc = new Uint8Array(8);
+        enc[0] = 2; // msg-type
+        enc[2] = 0; enc[3] = 1; // 1 encoding
+        enc[4] = 0; enc[5] = 0; enc[6] = 0; enc[7] = 0; // Raw=0
+        send(enc);
+
+        // FramebufferUpdateRequest (incremental=false for first frame)
+        requestFullFB();
+
+        canvas.width = fbWidth;
+        canvas.height = fbHeight;
+        imgData = ctx.createImageData(fbWidth, fbHeight);
+        state = 4;
+        setStatus('Conectado', 'connected');
+        processBuffer();
+      }
+    } else if (state === 4) {
+      processFramebufferUpdate();
+    }
   }
-};
+
+  function processFramebufferUpdate() {
+    while (recvBuf.length >= 4) {
+      var msgType = recvBuf[0];
+      var nRects = (recvBuf[2] << 8) | recvBuf[3];
+      if (msgType === 0 && nRects > 0 && recvBuf.length >= 4) {
+        var pos = 4;
+        for (var r = 0; r < nRects; r++) {
+          if (pos + 12 > recvBuf.length) return; // need more data
+          var rx = (recvBuf[pos] << 8) | recvBuf[pos+1];
+          var ry = (recvBuf[pos+2] << 8) | recvBuf[pos+3];
+          var rw = (recvBuf[pos+4] << 8) | recvBuf[pos+5];
+          var rh = (recvBuf[pos+6] << 8) | recvBuf[pos+7];
+          var encType = (recvBuf[pos+8] << 24) | (recvBuf[pos+9] << 16) | (recvBuf[pos+10] << 8) | recvBuf[pos+11];
+          pos += 12;
+          if (encType === 0) { // Raw
+            var rawSize = rw * rh * 4;
+            if (pos + rawSize > recvBuf.length) return; // need more data
+            renderRaw(rx, ry, rw, rh, recvBuf.slice(pos, pos + rawSize));
+            pos += rawSize;
+          } else {
+            // Skip unknown encoding - just skip 4 bytes + dataLength (heuristic)
+            if (pos + 4 > recvBuf.length) return;
+            var skip = (recvBuf[pos] << 24) | (recvBuf[pos+1] << 16) | (recvBuf[pos+2] << 8) | recvBuf[pos+3];
+            pos += 4 + skip;
+            if (skip === 0) pos += 4; // attempt to skip
+          }
+        }
+        recvBuf = recvBuf.slice(pos);
+        // Request next update (incremental)
+        requestFullFB();
+      } else {
+        // Unknown message, skip
+        recvBuf = recvBuf.slice(recvBuf.length);
+      }
+    }
+  }
+
+  function renderRaw(x, y, w, h, pixels) {
+    if (!imgData) return;
+    for (var row = 0; row < h; row++) {
+      for (var col = 0; col < w; col++) {
+        var srcIdx = (row * w + col) * 4;
+        var dstIdx = ((y + row) * fbWidth + (x + col)) * 4;
+        // BGRA -> RGBA
+        imgData.data[dstIdx] = pixels[srcIdx + 2];     // R
+        imgData.data[dstIdx + 1] = pixels[srcIdx + 1]; // G
+        imgData.data[dstIdx + 2] = pixels[srcIdx];     // B
+        imgData.data[dstIdx + 3] = 255;                 // A
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function requestFullFB() {
+    var fur = new Uint8Array(10);
+    fur[0] = 3; // FramebufferUpdateRequest
+    fur[1] = 0; // incremental
+    fur[2] = 0; fur[3] = 0; // x
+    fur[4] = 0; fur[5] = 0; // y
+    fur[6] = (fbWidth >> 8) & 0xFF;
+    fur[7] = fbWidth & 0xFF;
+    fur[8] = (fbHeight >> 8) & 0xFF;
+    fur[9] = fbHeight & 0xFF;
+    send(fur);
+  }
+
+  function send(bytes) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(bytes.buffer);
+    }
+  }
+
+  function sendStr(str) {
+    var encoder = new TextEncoder();
+    send(encoder.encode(str));
+  }
+
+  function concatU8(a, b) {
+    var c = new Uint8Array(a.length + b.length);
+    c.set(a, 0);
+    c.set(b, a.length);
+    return c;
+  }
+
+  btnConn.disabled = false;
+  setStatus('Pronto. Clique Conectar.');
+})();
 </script>
 </body>
 </html>

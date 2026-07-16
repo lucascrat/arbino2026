@@ -218,6 +218,14 @@ export class ApiServer {
         res.json({ ok: false, message: 'Bot já está rodando' });
         return;
       }
+      // Mata setup-login se estiver rodando (compartilham o mesmo perfil Chromium)
+      if (this.setupProcess) {
+        log.info('Parando setup-login antes de iniciar trade');
+        this.setupProcess.kill('SIGINT');
+        // Mata qualquer Chrome residual
+        try { execSync('pkill -9 -f "chrome.*binomo-profile" 2>/dev/null', { timeout: 3000 }); } catch {}
+        this.setupProcess = null;
+      }
       const mode = (req.body?.mode as string) || 'trade';
       const indexJs = path.join(projectRoot, 'dist', 'index.js');
       const nodeExe = process.execPath;
@@ -280,6 +288,16 @@ export class ApiServer {
         res.json({ ok: false, message: 'Setup ja em andamento' });
         return;
       }
+      // Mata bot se estiver rodando (compartilham o mesmo perfil Chromium)
+      if (this.botProcess) {
+        log.info('Parando bot antes de iniciar setup-login');
+        this.botProcess.kill('SIGINT');
+        try { execSync('pkill -9 -f "chrome.*binomo-profile" 2>/dev/null', { timeout: 3000 }); } catch {}
+        this.botProcess = null;
+        this.botRunning = false;
+      }
+      // Limpa locks stale do perfil Chromium (caso restart do container)
+      try { execSync('rm -f /data/.binomo-profile/SingletonLock /data/.binomo-profile/SingletonSocket /data/.binomo-profile/SingletonCookie 2>/dev/null', { timeout: 2000 }); } catch {}
       const distDir = path.resolve(projectRoot, 'dist');
       const setupScript = path.join(distDir, 'server', 'setup-login.js');
       // Usa o mesmo entry point com flag especial

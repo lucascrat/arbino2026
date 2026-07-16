@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     const feed = new CandleFeed(config.candleTimeframeSeconds);
     const session = new BrowserSession(feed);
     try {
-      await session.start();
+      await session.start(true);
       log.info('Navegador aberto. URL: %s', session.getPageInfoSync().url);
       log.info('Faça login manualmente. Pressione Ctrl+C para encerrar.');
       // Mantém o processo vivo até receber SIGINT/SIGTERM
