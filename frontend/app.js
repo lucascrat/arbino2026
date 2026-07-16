@@ -205,14 +205,14 @@ async function refreshStats() {
     var r = await api('/api/stats'); var s = await r.json();
     if (s.overall) {
       var o = s.overall;
-      var wr = o.total > 0 ? ((o.wins / o.total) * 100).toFixed(0) : '--';
+      var wr = o.totalTrades > 0 ? ((o.wins / o.totalTrades) * 100).toFixed(0) : '--';
       document.getElementById('statWinRate').textContent = wr + '%';
       document.getElementById('statWL').textContent = o.wins + 'W / ' + o.losses + 'L';
       var net = (o.totalProfit || 0).toFixed(2);
       var nel = document.getElementById('statNet');
       nel.textContent = 'R$ ' + net;
       nel.className = 'value ' + (parseFloat(net) >= 0 ? 'val-green' : 'val-red');
-      document.getElementById('statTotalTrades').textContent = o.total + ' trades';
+      document.getElementById('statTotalTrades').textContent = o.totalTrades + ' trades';
       var streaksEl = document.getElementById('analyticsStreaks');
       if (streaksEl) {
         streaksEl.innerHTML = 'Melhor seq. wins: <span style="color:var(--green)">' + (o.bestStreak || 0) + '</span> | Pior seq. losses: <span style="color:var(--red)">' + (o.worstStreak || 0) + '</span>';

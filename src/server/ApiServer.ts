@@ -92,6 +92,17 @@ export class ApiServer {
   }
 
   private buildBaseState(): BotState {
+    const todayTrades = this.db.countTradesToday();
+    const todayLosses = this.db.sumLossesToday();
+    let consecutiveLosses = 0;
+    try {
+      const recent = this.db.getTrades(20);
+      for (const t of recent) {
+        if (t.status === 'LOSS') consecutiveLosses++;
+        else break;
+      }
+    } catch { /* fallback: 0 */ }
+
     return {
       running: false,
       mode: config.mode,
@@ -108,9 +119,9 @@ export class ApiServer {
       maxDailyProfit: config.maxDailyProfit,
       aiEnabled: config.aiEnabled,
       aiModel: config.aiModel,
-      tradesToday: 0,
-      lossesToday: 0,
-      consecutiveLosses: 0,
+      tradesToday: todayTrades,
+      lossesToday: todayLosses,
+      consecutiveLosses,
       balance: null,
       lastSignal: null,
       lastTrade: null,

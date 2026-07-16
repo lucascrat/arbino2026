@@ -12,9 +12,7 @@ export type { DiagnosticInfo } from '../server/ApiServer.js';
 export class BotApiClient {
   private baseUrl: string;
   public sessionId: string;
-  private consecutiveFailures = 0;
-  private maxFailures = 5;
-  private disabledLogged = false;
+  private loggedFirstFailure = false;
 
   constructor(baseUrl = 'http://localhost:3456', sessionId?: string) {
     this.baseUrl = baseUrl;
@@ -22,13 +20,6 @@ export class BotApiClient {
   }
 
   async sendEvent(event: BotEvent): Promise<unknown> {
-    if (this.consecutiveFailures >= this.maxFailures) {
-      if (!this.disabledLogged) {
-        log.warn('API client desabilitado apos %d falhas consecutivas. (supressao de logs ativa)', this.consecutiveFailures);
-        this.disabledLogged = true;
-      }
-      return;
-    }
     try {
       const res = await fetch(`${this.baseUrl}/api/events`, {
         method: 'POST',
@@ -37,13 +28,19 @@ export class BotApiClient {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        if (!this.loggedFirstFailure) {
+          log.warn('API retornou status %d ao enviar evento (tipo=%s). Endpoint pode estar offline.', res.status, event.type);
+          this.loggedFirstFailure = true;
+        }
+        return;
       }
-      this.consecutiveFailures = 0;
+      this.loggedFirstFailure = false;
       return await res.json().catch(() => ({ ok: true }));
     } catch (err) {
-      this.consecutiveFailures++;
-      log.debug('Falha ao enviar evento (%d/%d): %s', this.consecutiveFailures, this.maxFailures, (err as Error).message);
+      if (!this.loggedFirstFailure) {
+        log.warn('Falha ao enviar evento (tipo=%s): %s', event.type, (err as Error).message);
+        this.loggedFirstFailure = true;
+      }
       return;
     }
   }
