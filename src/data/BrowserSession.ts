@@ -30,7 +30,9 @@ export class BrowserSession {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
+        '--use-gl=angle',
+        '--use-angle=swiftshader-webgl',
+        '--window-size=1360,850',
       ],
     });
 
