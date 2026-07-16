@@ -48,8 +48,34 @@
 }
 </script>
 
-<script type="module">
-import RFB from '@novnc/novnc/core/rfb.js';
+<script>
+// Diagnostico de carregamento de modulos
+window.__vncLog = [];
+window.__vncLog.push('Script iniciado');
+document.getElementById('vncStatus').textContent = 'Carregando...';
+</script>
+<script data-cfasync="false">
+// Diagnostico de carregamento de modulos
+window.__vncLog = [];
+window.__vncLog.push('Script iniciado');
+document.getElementById('vncStatus').textContent = 'Carregando...';
+</script>
+<script data-cfasync="false" type="module">
+window.__vncLog.push('Module script executando');
+try {
+  var m = await import('@novnc/novnc/core/rfb.js');
+  window.__vncLog.push('RFB importado com sucesso');
+  window.__RFB = m.default;
+} catch(e) {
+  window.__vncLog.push('ERRO import RFB: ' + e.message);
+  document.getElementById('vncStatus').textContent = 'Erro mod: ' + e.message;
+}
+window.__vncLog.push('Module script concluido');
+document.getElementById('btnConnect').disabled = false;
+document.getElementById('vncStatus').textContent = 'Pronto. Clique Conectar.';
+</script>
+<script>
+window.__vncLog.push('Script classico iniciado');
 
 function setStatus(msg, cls) {
   var el = document.getElementById('vncStatus');
@@ -58,14 +84,22 @@ function setStatus(msg, cls) {
 }
 
 window.doConnect = async function() {
+  window.__vncLog.push('doConnect chamado');
   var btnConn = document.getElementById('btnConnect');
   var btnDisc = document.getElementById('btnDisconnect');
   btnConn.disabled = true;
   setStatus('Conectando...');
+  var RFB = window.__RFB;
+  if (!RFB) {
+    setStatus('RFB nao carregado', 'error');
+    btnConn.disabled = false;
+    return;
+  }
 
   try {
     var healthRes = await fetch('/api/vnc/health');
     var health = await healthRes.json();
+    window.__vncLog.push('Health: ' + JSON.stringify(health));
     if (!health.ok) {
       setStatus('x11vnc offline: ' + health.message, 'error');
       btnConn.disabled = false;
@@ -73,6 +107,7 @@ window.doConnect = async function() {
     }
     setStatus('x11vnc OK. Conectando WebSocket...');
   } catch (err) {
+    window.__vncLog.push('Health error: ' + err.message);
     setStatus('Erro ao verificar VNC: ' + err.message, 'error');
     btnConn.disabled = false;
     return;
@@ -81,55 +116,58 @@ window.doConnect = async function() {
   try {
     var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + window.location.host + '/api/vnc/ws';
+    window.__vncLog.push('Conectando WS: ' + url);
 
-    rfb = new RFB(document.getElementById('vncCanvas'), url, {
+    var rfb = new RFB(document.getElementById('vncCanvas'), url, {
       credentials: { password: '' },
       shared: true,
     });
+    window.__rfb = rfb;
 
     rfb.addEventListener('connect', function() {
+      window.__vncLog.push('RFB connected');
       setStatus('Conectado', 'connected');
       btnConn.disabled = true;
       btnDisc.disabled = false;
     });
 
     rfb.addEventListener('disconnect', function(e) {
-      var reason = (e.detail && e.detail.clean) ? '' : ' (erro)';
-      setStatus('Desconectado' + reason, 'error');
+      var reason = (e.detail && e.detail.clean) ? 'limpo' : 'erro';
+      window.__vncLog.push('RFB disconnected: ' + reason);
+      var msg = 'Desconectado' + (reason === 'erro' ? ' (erro)' : '');
+      setStatus(msg, 'error');
       btnConn.disabled = false;
       btnDisc.disabled = true;
-      rfb = null;
     });
 
     rfb.addEventListener('securityfailure', function(e) {
       var reason = (e.detail && e.detail.reason) ? e.detail.reason : 'desconhecido';
+      window.__vncLog.push('Security failure: ' + reason);
       setStatus('Erro seguranca: ' + reason, 'error');
       btnConn.disabled = false;
     });
 
     setTimeout(function() {
       if (rfb && rfb._rfbConnectionState !== 'connected') {
+        window.__vncLog.push('Timeout waiting for connection');
         setStatus('Timeout: VNC nao respondeu', 'error');
       }
     }, 15000);
   } catch (err) {
+    window.__vncLog.push('doConnect error: ' + err.message);
     setStatus('Erro: ' + err.message, 'error');
     btnConn.disabled = false;
   }
 };
 
-var rfb = null;
-
 window.doDisconnect = function() {
-  if (rfb) {
-    rfb.disconnect();
-    rfb = null;
+  window.__vncLog.push('doDisconnect chamado');
+  if (window.__rfb) {
+    window.__rfb.disconnect();
+    window.__rfb = null;
     setStatus('Desconectado');
   }
 };
-
-document.getElementById('btnConnect').disabled = false;
-setStatus('Pronto. Clique Conectar.');
 </script>
 </body>
 </html>
