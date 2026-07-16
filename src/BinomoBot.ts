@@ -127,34 +127,61 @@ export class BinomoBot {
       const data = await res.json() as {
         galeStats: { avgLevel: number; totalGales: number; distribution: Record<string, number> };
         hourlyGales: { hour: number; count: number }[];
+        hourlyGaleLevels: { hour: number; g1: number; g2: number; g3: number; g4: number; g5plus: number; totalGales: number; recovered: number; totalLoss: number }[];
         hourlyPerformance: { hour: number; wins: number; losses: number; total: number; winRate: number }[];
         marketStateStats: { state: string; wins: number; losses: number; total: number; winRate: number }[];
       };
 
       const parts: string[] = [];
 
-      // Gale stats
+      // === RESUMO GERAL DE GALES ===
       if (data.galeStats.totalGales > 0) {
-        parts.push(`Gales: media nivel ${data.galeStats.avgLevel}, total ${data.galeStats.totalGales}`);
+        const gs = data.galeStats;
+        let distStr = '';
+        for (const [k, v] of Object.entries(gs.distribution)) {
+          distStr += `${k.replace('nivel_', 'G')}=${v}, `;
+        }
+        parts.push(`GALES: total=${gs.totalGales} | media nivel=${gs.avgLevel} | ${distStr}`);
       }
 
-      // Melhores/piores horarios
+      // === GALES POR HORA COM DETALHAMENTO DE NIVEL ===
+      if (data.hourlyGaleLevels && data.hourlyGaleLevels.length > 0) {
+        const hgl = data.hourlyGaleLevels;
+        const topGaleHours = [...hgl]
+          .sort((a, b) => b.totalGales - a.totalGales)
+          .slice(0, 6);
+        const galeByHour = topGaleHours.map((h) => {
+          const levels: string[] = [];
+          if (h.g1 > 0) levels.push(`G1:${h.g1}`);
+          if (h.g2 > 0) levels.push(`G2:${h.g2}`);
+          if (h.g3 > 0) levels.push(`G3:${h.g3}`);
+          if (h.g4 > 0) levels.push(`G4:${h.g4}`);
+          if (h.g5plus > 0) levels.push(`G5+:${h.g5plus}`);
+          const recRate = h.totalGales > 0 ? ((h.recovered / h.totalGales) * 100).toFixed(0) : '0';
+          return `${h.hour}h [${levels.join(' ')}] rec=${recRate}%`;
+        }).join(' | ');
+        parts.push(`GALE POR HORA: ${galeByHour}`);
+      }
+
+      // === PERFORMANCE POR HORA (WIN RATE) ===
       const valid = data.hourlyPerformance.filter((h) => h.total >= 2);
       if (valid.length > 0) {
-        const best = [...valid].sort((a, b) => b.winRate - a.winRate).slice(0, 2);
-        const worst = [...valid].sort((a, b) => a.winRate - b.winRate).slice(0, 2);
-        parts.push(`Melhores horarios: ${best.map((h) => `${h.hour}h(${h.winRate}%)`).join(', ')}`);
-        parts.push(`Piores horarios: ${worst.map((h) => `${h.hour}h(${h.winRate}%)`).join(', ')}`);
+        const best = [...valid].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+        const worst = [...valid].sort((a, b) => a.winRate - b.winRate).slice(0, 3);
+        parts.push(`MELHORES HORAS: ${best.map((h) => `${h.hour}h=${h.winRate}%(${h.wins}W/${h.total})`).join(', ')}`);
+        if (worst.length > 0) {
+          parts.push(`PIORES HORAS: ${worst.map((h) => `${h.hour}h=${h.winRate}%(${h.wins}W/${h.total})`).join(', ')}`);
+        }
       }
 
-      // Mercado
+      // === ESTADO DO MERCADO ===
       if (data.marketStateStats.length > 0) {
-        const top = data.marketStateStats.slice(0, 3);
-        parts.push(`Mercado: ${top.map((m) => `${m.state}(${m.winRate}%)`).join(', ')}`);
+        const top = data.marketStateStats.slice(0, 5);
+        parts.push(`MERCADOS: ${top.map((m) => `${m.state}=${m.winRate}%(${m.total}t)`).join(', ')}`);
       }
 
       if (parts.length > 0) {
-        this.ai.setAnalytics(parts.join(' | '));
+        this.ai.setAnalytics(parts.join('\n'));
         log.info('Analytics carregados para IA: %s', parts.join(' | '));
       }
     } catch {

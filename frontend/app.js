@@ -387,9 +387,22 @@ function toggleAnalytics() {
 async function fetchAnalytics() {
   try {
     var r = await api('/api/analytics'); var a = await r.json();
-    // Gales por horario
+    // Gales detalhados por hora com niveis
     var galeEl = document.getElementById('analyticsGale');
-    if (a.hourlyGales && a.hourlyGales.length) {
+    if (a.hourlyGaleLevels && a.hourlyGaleLevels.length) {
+      var rows = a.hourlyGaleLevels.slice().sort(function(a, b) { return b.totalGales - a.totalGales; }).slice(0, 12);
+      galeEl.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:4px 12px">' +
+        rows.map(function(h) {
+          var parts = [];
+          if (h.g1 > 0) parts.push('G1:' + h.g1);
+          if (h.g2 > 0) parts.push('G2:' + h.g2);
+          if (h.g3 > 0) parts.push('G3:' + h.g3);
+          if (h.g4 > 0) parts.push('G4:' + h.g4);
+          if (h.g5plus > 0) parts.push('G5+:' + h.g5plus);
+          var cls = h.recovered >= h.totalGales / 2 ? 'color:var(--green)' : 'color:var(--red)';
+          return '<span>' + h.hour + 'h: ' + parts.join(' ') + ' | rec:<span style="' + cls + '">' + Math.round(h.recovered/h.totalGales*100) + '%</span></span>';
+        }).join('') + '</div>';
+    } else if (a.hourlyGales && a.hourlyGales.length) {
       galeEl.innerHTML = a.hourlyGales.map(function(h) {
         return h.hour + 'h: ' + h.count + ' gale(s)';
       }).join(' | ');
@@ -417,17 +430,24 @@ async function fetchAnalytics() {
     // Estado do mercado
     var marketEl = document.getElementById('analyticsMarket');
     if (a.marketStateStats && a.marketStateStats.length) {
-      marketEl.innerHTML = a.marketStateStats.slice(0, 4).map(function(m) {
+      marketEl.innerHTML = a.marketStateStats.slice(0, 5).map(function(m) {
         var cls = m.winRate >= 50 ? 'color:var(--green)' : 'color:var(--red)';
         return '<span style="' + cls + '">' + m.state + ': ' + m.winRate + '% (' + m.wins + 'W/' + m.losses + 'L)</span>';
       }).join('<br>');
     } else {
       marketEl.textContent = 'Sem dados de mercado';
     }
-    // Gale stats
+    // Summary de gales total
+    var statsEl = document.getElementById('analyticsStats');
     if (a.galeStats && a.galeStats.totalGales > 0) {
       var gs = a.galeStats;
-      galeEl.textContent = 'Total: ' + gs.totalGales + ' | Media nivel: ' + gs.avgLevel + ' | ' + (galeEl.textContent || '');
+      var distStr = '';
+      for (var k in gs.distribution) {
+        distStr += k.replace('nivel_', 'G') + ':' + gs.distribution[k] + ' ';
+      }
+      statsEl.innerHTML = 'Total gales: ' + gs.totalGales + ' | Media: ' + gs.avgLevel + ' | ' + distStr;
+    } else {
+      statsEl.textContent = 'Sem dados';
     }
   } catch(e) {}
 }

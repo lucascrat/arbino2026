@@ -646,6 +646,7 @@ export class AppDatabase {
   getAnalytics(): {
     galeStats: { avgLevel: number; totalGales: number; distribution: Record<string, number> };
     hourlyGales: { hour: number; count: number }[];
+    hourlyGaleLevels: { hour: number; g1: number; g2: number; g3: number; g4: number; g5plus: number; totalGales: number; recovered: number; totalLoss: number }[];
     hourlyPerformance: { hour: number; wins: number; losses: number; total: number; winRate: number }[];
     marketStateStats: { state: string; wins: number; losses: number; total: number; winRate: number }[];
   } {
@@ -664,6 +665,21 @@ export class AppDatabase {
        FROM trades WHERE martingale_level > 0 AND status IN ('WIN','LOSS')
        GROUP BY hour ORDER BY hour`
     ).all() as { hour: number; count: number }[];
+
+    // Gale por hora detalhado: quantos G1, G2, G3, G4, G5+ por hora
+    const hourlyGaleLevels = this.db.prepare(
+      `SELECT CAST(strftime('%H', placed_at / 1000, 'unixepoch') AS INTEGER) as hour,
+              SUM(CASE WHEN martingale_level = 1 THEN 1 ELSE 0 END) as g1,
+              SUM(CASE WHEN martingale_level = 2 THEN 1 ELSE 0 END) as g2,
+              SUM(CASE WHEN martingale_level = 3 THEN 1 ELSE 0 END) as g3,
+              SUM(CASE WHEN martingale_level = 4 THEN 1 ELSE 0 END) as g4,
+              SUM(CASE WHEN martingale_level >= 5 THEN 1 ELSE 0 END) as g5plus,
+              COUNT(*) as totalGales,
+              SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as recovered,
+              SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as totalLoss
+       FROM trades WHERE martingale_level > 0 AND status IN ('WIN','LOSS')
+       GROUP BY hour ORDER BY hour`
+    ).all() as { hour: number; g1: number; g2: number; g3: number; g4: number; g5plus: number; totalGales: number; recovered: number; totalLoss: number }[];
 
     const hourlyPerf = this.db.prepare(
       `SELECT CAST(strftime('%H', placed_at / 1000, 'unixepoch') AS INTEGER) as hour,
@@ -702,6 +718,7 @@ export class AppDatabase {
     return {
       galeStats: { avgLevel, totalGales, distribution },
       hourlyGales,
+      hourlyGaleLevels,
       hourlyPerformance,
       marketStateStats,
     };
