@@ -50,6 +50,9 @@ export class BinomoBot {
   }
 
   async run(mode: RunMode = config.mode): Promise<void> {
+    // Carrega settings do banco ANTES de logar as configs
+    await this.loadSettingsFromDb();
+    
     log.info('Iniciando bot no modo: %s | TF candle=%ds | exp=%ds | asset=%s', mode, config.candleTimeframeSeconds, config.expirationSeconds, config.asset);
     log.info('IA: %s | Score min: %d | Entrada: R$ %s | Gale: %d niveis (%sx)', config.aiEnabled ? 'ATIVA' : 'OFF', config.minSignalScore, config.entryValue.toFixed(2), config.martingaleLevels, config.martingaleMultiplier);
 
