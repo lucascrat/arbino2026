@@ -2,7 +2,7 @@
 set -e
 
 # Inicia Xvfb (display virtual para o Chromium)
-Xvfb :99 -screen 0 1366x850x24 +extension RANDR +extension GLX &
+Xvfb :99 -screen 0 1360x850x24 +extension RANDR +extension GLX &
 sleep 1
 export DISPLAY=:99
 

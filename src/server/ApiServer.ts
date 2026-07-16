@@ -3,7 +3,7 @@ import http from 'node:http';
 import { Server as IOServer } from 'socket.io';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import net from 'node:net';
 import { WebSocketServer } from 'ws';
 import { AppDatabase } from '../db/Database.js';
@@ -469,7 +469,6 @@ export class ApiServer {
 
     // Lista janelas abertas no display (para debug)
     this.app.get('/api/vnc/windows', (_req, res) => {
-      const { execSync } = require('node:child_process');
       try {
         const w = execSync('xdotool search . 2>/dev/null || true', { encoding: 'utf8' }).trim();
         if (!w) {

@@ -22,7 +22,7 @@ export class BrowserSession {
     log.info('Abrindo Chromium (perfil persistente em %s)', config.userDataDir);
     this.ctx = await chromium.launchPersistentContext(config.userDataDir, {
       headless: config.headless,
-      viewport: { width: 1366, height: 850 },
+      viewport: { width: 1360, height: 850 },
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
       args: [
