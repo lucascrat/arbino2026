@@ -3,10 +3,13 @@ import { config } from '../config.js';
 import { service } from '../logger.js';
 import type { Candle } from '../types.js';
 import { CandleFeed } from './CandleFeed.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const log = service('BrowserSession');
+const COOKIE_FILE = path.join(config.logsDir, 'binomo-cookies.json');
 
 export class BrowserSession {
   private ctx!: BrowserContext;
@@ -33,10 +36,14 @@ export class BrowserSession {
         '--use-gl=angle',
         '--use-angle=swiftshader-webgl',
         '--window-size=1360,850',
+      '--restore-last-session',
       ],
     });
 
     this.page = this.ctx.pages()[0] ?? (await this.ctx.newPage());
+
+    // Restaura cookies salvos antes de navegar
+    await this.restoreCookies();
 
     this.attachWebsocketInterceptor();
 
@@ -370,8 +377,35 @@ export class BrowserSession {
     }
   }
 
+  private async restoreCookies(): Promise<void> {
+    try {
+      if (fs.existsSync(COOKIE_FILE)) {
+        const cookies = JSON.parse(fs.readFileSync(COOKIE_FILE, 'utf8'));
+        if (Array.isArray(cookies) && cookies.length > 0) {
+          await this.ctx.addCookies(cookies);
+          log.info('Cookies restaurados: %d cookies carregados', cookies.length);
+        }
+      }
+    } catch (err) {
+      log.debug('Nao foi possivel restaurar cookies: %s', (err as Error).message);
+    }
+  }
+
+  private async saveCookies(): Promise<void> {
+    try {
+      const cookies = await this.ctx.cookies();
+      const dir = path.dirname(COOKIE_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies, null, 2), 'utf8');
+      log.info('Cookies salvos: %d cookies em %s', cookies.length, COOKIE_FILE);
+    } catch (err) {
+      log.debug('Nao foi possivel salvar cookies: %s', (err as Error).message);
+    }
+  }
+
   async close(): Promise<void> {
     try {
+      await this.saveCookies();
       await this.ctx?.close();
     } catch {
       /* noop */
