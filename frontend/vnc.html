@@ -260,6 +260,94 @@
     return c;
   }
 
+  // Input: mouse/keyboard
+  canvas.tabIndex = 0;
+  canvas.style.outline = 'none';
+  canvas.focus();
+
+  function getKeySym(e) {
+    var k = e.key;
+    if (k === 'Enter') return 0xFF0D;
+    if (k === 'Backspace') return 0xFF08;
+    if (k === 'Tab') return 0xFF09;
+    if (k === 'Escape') return 0xFF1B;
+    if (k === 'Shift') return 0xFFE1;
+    if (k === 'Control') return 0xFFE3;
+    if (k === 'Alt') return 0xFFE9;
+    if (k === 'ArrowUp') return 0xFF52;
+    if (k === 'ArrowDown') return 0xFF54;
+    if (k === 'ArrowLeft') return 0xFF51;
+    if (k === 'ArrowRight') return 0xFF53;
+    if (k === 'Delete') return 0xFFFF;
+    if (k === 'Home') return 0xFF50;
+    if (k === 'End') return 0xFF57;
+    if (k === ' ') return 0x0020;
+    if (k.length === 1) return k.charCodeAt(0);
+    return 0;
+  }
+
+  function sendKey(keysym, down) {
+    var ev = new Uint8Array(8);
+    ev[0] = 4; // KeyEvent
+    ev[1] = down ? 1 : 0;
+    // padding [2-3]
+    ev[4] = (keysym >> 24) & 0xFF;
+    ev[5] = (keysym >> 16) & 0xFF;
+    ev[6] = (keysym >> 8) & 0xFF;
+    ev[7] = keysym & 0xFF;
+    send(ev);
+  }
+
+  function sendPointer(x, y, buttons) {
+    var ev = new Uint8Array(6);
+    ev[0] = 5; // PointerEvent
+    ev[1] = buttons; // 1=left, 2=middle, 4=right
+    ev[2] = (x >> 8) & 0xFF;
+    ev[3] = x & 0xFF;
+    ev[4] = (y >> 8) & 0xFF;
+    ev[5] = y & 0xFF;
+    send(ev);
+  }
+
+  var mouseDown = false;
+  canvas.addEventListener('mousedown', function(e) {
+    mouseDown = true;
+    var rect = canvas.getBoundingClientRect();
+    var sx = canvas.width / rect.width;
+    var sy = canvas.height / rect.height;
+    var x = Math.floor((e.clientX - rect.left) * sx);
+    var y = Math.floor((e.clientY - rect.top) * sy);
+    sendPointer(x, y, 1);
+    canvas.focus();
+    e.preventDefault();
+  });
+  canvas.addEventListener('mouseup', function(e) {
+    mouseDown = false;
+    var rect = canvas.getBoundingClientRect();
+    var sx = canvas.width / rect.width;
+    var sy = canvas.height / rect.height;
+    var x = Math.floor((e.clientX - rect.left) * sx);
+    var y = Math.floor((e.clientY - rect.top) * sy);
+    sendPointer(x, y, 0);
+  });
+  canvas.addEventListener('mousemove', function(e) {
+    if (!mouseDown) return;
+    var rect = canvas.getBoundingClientRect();
+    var sx = canvas.width / rect.width;
+    var sy = canvas.height / rect.height;
+    var x = Math.floor((e.clientX - rect.left) * sx);
+    var y = Math.floor((e.clientY - rect.top) * sy);
+    sendPointer(x, y, 1);
+  });
+  canvas.addEventListener('keydown', function(e) {
+    var ks = getKeySym(e);
+    if (ks > 0) { sendKey(ks, 1); e.preventDefault(); }
+  });
+  canvas.addEventListener('keyup', function(e) {
+    var ks = getKeySym(e);
+    if (ks > 0) { sendKey(ks, 0); e.preventDefault(); }
+  });
+
   btnConn.disabled = false;
   setStatus('Pronto. Clique Conectar.');
 })();
