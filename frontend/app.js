@@ -21,7 +21,7 @@ async function api(path, opts = {}) {
 
 window.doLogin = async function() {
   var user = document.getElementById('loginUser').value;
-  var pass = document.getElementById('loginPass').value;
+  var password = document.getElementById('loginPass').value;
   try {
     var res = await fetch('/api/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
