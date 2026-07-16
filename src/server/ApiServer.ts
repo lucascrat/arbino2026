@@ -194,7 +194,50 @@ export class ApiServer {
     this.app.get('/api/trades', (req, res) => {
       const limit = Number(req.query.limit) || 100;
       const trades = this.db.getTrades(limit);
-      res.json(trades);
+      res.json({ trades });
+    });
+
+    // Exportacao de dados
+    this.app.get('/api/export/trades/csv', (req, res) => {
+      const dateFrom = req.query.from as string | undefined;
+      const dateTo = req.query.to as string | undefined;
+      const csv = this.db.exportTradesCSV(dateFrom, dateTo);
+      res.header('Content-Type', 'text/csv; charset=utf-8');
+      res.header('Content-Disposition', 'attachment; filename=trades.csv');
+      res.send(csv || 'sem dados');
+    });
+
+    this.app.get('/api/export/trades/json', (req, res) => {
+      const dateFrom = req.query.from as string | undefined;
+      const dateTo = req.query.to as string | undefined;
+      const data = this.db.exportTradesJSON(dateFrom, dateTo);
+      res.json(data);
+    });
+
+    // Historico de saldo
+    this.app.get('/api/balance/history', (req, res) => {
+      const limit = Number(req.query.limit) || 200;
+      res.json(this.db.getBalanceHistory(limit));
+    });
+
+    this.app.get('/api/balance/last', (_req, res) => {
+      const last = this.db.getLastBalance();
+      if (last) res.json(last);
+      else res.json({ balance: 0, currency: 'BRL', timestamp: 0 });
+    });
+
+    // Estatisticas diarias
+    this.app.get('/api/daily-stats', (req, res) => {
+      const days = Number(req.query.days) || 30;
+      const today = new Date().toISOString().slice(0, 10);
+      this.db.saveDailyStats(today);
+      res.json(this.db.getDailyStats(days));
+    });
+
+    // Logs de erro
+    this.app.get('/api/error-logs', (req, res) => {
+      const limit = Number(req.query.limit) || 50;
+      res.json(this.db.getErrorLogs(limit));
     });
 
     this.app.get('/api/analytics', (_req, res) => {
@@ -471,6 +514,7 @@ export class ApiServer {
       }
       if (event.type === 'balance' && event.balance != null) {
         this.state.balance = event.balance;
+        this.db.recordBalance(event.balance, event.currency ?? 'BRL', undefined);
         this.emitEvent({ type: 'state', state: this.getState() });
       }
       if (event.type === 'diagnostic' && event.info) {
@@ -683,6 +727,15 @@ export class ApiServer {
   }
 
   start(): Promise<void> {
+    // Manutencao periodica do banco: a cada 6h
+    setInterval(() => {
+      try {
+        this.db.maintenance();
+        log.info('Manutencao periodica do banco concluida');
+      } catch (err) {
+        log.warn('Erro na manutencao periodica: %s', (err as Error).message);
+      }
+    }, 21600000); // 6 horas
     return new Promise((resolve) => {
       this.server.listen(this.port, () => {
         log.info('API rodando em http://localhost:%d', this.port);
