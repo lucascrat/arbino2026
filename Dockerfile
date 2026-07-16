@@ -20,6 +20,13 @@ RUN npm install && npx playwright install chromium
 
 COPY tsconfig.json ./
 COPY src/ src/
+RUN wget -q https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -O /tmp/novnc.tar.gz && \
+  tar xzf /tmp/novnc.tar.gz -C /tmp && \
+  mkdir -p frontend/novnc && \
+  cp -r /tmp/noVNC-1.5.0/core frontend/novnc/core && \
+  cp -r /tmp/noVNC-1.5.0/vendor frontend/novnc/vendor && \
+  rm -rf /tmp/noVNC*
+
 COPY frontend/ frontend/
 COPY electron-launcher.cjs ./
 COPY electron-preload.cjs ./
