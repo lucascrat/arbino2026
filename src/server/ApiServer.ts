@@ -491,6 +491,17 @@ export class ApiServer {
       }
     });
 
+    // Screenshot da tela X11 (via GraphicsMagick)
+    this.app.get('/api/vnc/screenshot', (_req, res) => {
+      const tmp = '/tmp/screen.png';
+      try {
+        execSync(`DISPLAY=:99 gm import -window root ${tmp} 2>/dev/null`, { timeout: 5000 });
+        res.sendFile(tmp);
+      } catch {
+        res.status(500).json({ error: 'Falha ao capturar screenshot' });
+      }
+    });
+
     // SPA fallback — serve index.html para rotas não-API
     this.app.use((_req, res) => {
       res.sendFile(path.join(frontendDir, 'index.html'));
