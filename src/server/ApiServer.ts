@@ -758,9 +758,52 @@ export class ApiServer {
     return new Promise((resolve) => {
       this.server.listen(this.port, () => {
         log.info('API rodando em http://localhost:%d', this.port);
+        // Auto-start bot se MODE=trade (producao)
+        if (process.env.MODE === 'trade' || process.env.MODE === 'setup-login') {
+          setTimeout(() => {
+            log.info('Auto-iniciando bot (MODE=%s)...', process.env.MODE);
+            this.autoStartBot();
+          }, 3000);
+        }
         resolve();
       });
     });
+  }
+
+  private autoStartBot(): void {
+    if (this.botRunning) return;
+    const mode = process.env.MODE === 'setup-login' ? 'setup-login' : 'trade';
+    const indexJs = path.join(projectRoot, 'dist', 'index.js');
+    const nodeExe = process.execPath;
+    log.info('Auto-start bot: %s %s --mode=%s', nodeExe, indexJs, mode);
+    this.botProcess = spawn(nodeExe, [indexJs, `--mode=${mode}`], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      env: { ...process.env, HEADLESS: 'false' },
+    });
+    this.botProcess.stdout?.on('data', (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg) {
+        log.info('[BOT] %s', msg);
+        this.emitEvent({ type: 'log', level: 'info', service: 'BOT', message: msg, ts: Date.now() });
+      }
+    });
+    this.botProcess.stderr?.on('data', (data: Buffer) => {
+      const msg = data.toString().trim();
+      if (msg) {
+        log.error('[BOT ERR] %s', msg);
+        this.emitEvent({ type: 'log', level: 'error', service: 'BOT', message: msg, ts: Date.now() });
+      }
+    });
+    this.botProcess.on('exit', (code) => {
+      log.info('Bot encerrado (código %s)', code);
+      this.botRunning = false;
+      this.botProcess = null;
+      this.io.emit('bot:stopped');
+      this.emitEvent({ type: 'state', state: this.getState() });
+    });
+    this.botRunning = true;
+    this.emitEvent({ type: 'state', state: this.getState() });
   }
 
   async stop(): Promise<void> {
