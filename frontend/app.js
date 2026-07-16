@@ -103,9 +103,11 @@ function initApp() {
   initChart();
   refreshStats();
   loadTrades();
+  fetchAnalytics();
   fetchState();
   fetchSystemStatus();
   setInterval(refreshStats, 10000);
+  setInterval(fetchAnalytics, 60000);
   setInterval(fetchState, 5000);
   setInterval(fetchSystemStatus, 15000);
 }
@@ -203,7 +205,7 @@ async function refreshStats() {
     var r = await api('/api/stats'); var s = await r.json();
     if (s.overall) {
       var o = s.overall;
-      var wr = o.total > 0 ? ((o.wins / o.total) * 100).toFixed(0) : '—';
+      var wr = o.total > 0 ? ((o.wins / o.total) * 100).toFixed(0) : '--';
       document.getElementById('statWinRate').textContent = wr + '%';
       document.getElementById('statWL').textContent = o.wins + 'W / ' + o.losses + 'L';
       var net = (o.totalProfit || 0).toFixed(2);
@@ -211,6 +213,10 @@ async function refreshStats() {
       nel.textContent = 'R$ ' + net;
       nel.className = 'value ' + (parseFloat(net) >= 0 ? 'val-green' : 'val-red');
       document.getElementById('statTotalTrades').textContent = o.total + ' trades';
+      var streaksEl = document.getElementById('analyticsStreaks');
+      if (streaksEl) {
+        streaksEl.innerHTML = 'Melhor seq. wins: <span style="color:var(--green)">' + (o.bestStreak || 0) + '</span> | Pior seq. losses: <span style="color:var(--red)">' + (o.worstStreak || 0) + '</span>';
+      }
     }
   } catch(e) {}
 }
@@ -368,6 +374,63 @@ async function openDiagnostic() {
 }
 
 function closeDiagnostic() { document.getElementById('diagModal').style.display = 'none'; }
+
+// ===== ANALYTICS =====
+var analyticsOpen = false;
+function toggleAnalytics() {
+  analyticsOpen = !analyticsOpen;
+  document.getElementById('analyticsContent').style.display = analyticsOpen ? 'block' : 'none';
+  document.getElementById('analyticsToggle').textContent = analyticsOpen ? '-' : '+';
+  if (analyticsOpen) fetchAnalytics();
+}
+
+async function fetchAnalytics() {
+  try {
+    var r = await api('/api/analytics'); var a = await r.json();
+    // Gales por horario
+    var galeEl = document.getElementById('analyticsGale');
+    if (a.hourlyGales && a.hourlyGales.length) {
+      galeEl.innerHTML = a.hourlyGales.map(function(h) {
+        return h.hour + 'h: ' + h.count + ' gale(s)';
+      }).join(' | ');
+    } else {
+      galeEl.textContent = 'Sem dados de gale';
+    }
+    // Melhores/piores horarios
+    var hoursEl = document.getElementById('analyticsHours');
+    if (a.hourlyPerformance && a.hourlyPerformance.length) {
+      var valid = a.hourlyPerformance.filter(function(h) { return h.total >= 1; });
+      if (valid.length) {
+        var best = valid.slice().sort(function(a, b) { return b.winRate - a.winRate; }).slice(0, 3);
+        var worst = valid.slice().sort(function(a, b) { return a.winRate - b.winRate; }).slice(0, 3);
+        hoursEl.innerHTML = 'Melhores: ' + best.map(function(h) {
+          return '<span style="color:var(--green)">' + h.hour + 'h ' + h.winRate + '%</span>';
+        }).join(', ') + '<br>Piores: ' + worst.map(function(h) {
+          return '<span style="color:var(--red)">' + h.hour + 'h ' + h.winRate + '%</span>';
+        }).join(', ');
+      } else {
+        hoursEl.textContent = 'Dados insuficientes';
+      }
+    } else {
+      hoursEl.textContent = 'Sem dados de performance';
+    }
+    // Estado do mercado
+    var marketEl = document.getElementById('analyticsMarket');
+    if (a.marketStateStats && a.marketStateStats.length) {
+      marketEl.innerHTML = a.marketStateStats.slice(0, 4).map(function(m) {
+        var cls = m.winRate >= 50 ? 'color:var(--green)' : 'color:var(--red)';
+        return '<span style="' + cls + '">' + m.state + ': ' + m.winRate + '% (' + m.wins + 'W/' + m.losses + 'L)</span>';
+      }).join('<br>');
+    } else {
+      marketEl.textContent = 'Sem dados de mercado';
+    }
+    // Gale stats
+    if (a.galeStats && a.galeStats.totalGales > 0) {
+      var gs = a.galeStats;
+      galeEl.textContent = 'Total: ' + gs.totalGales + ' | Media nivel: ' + gs.avgLevel + ' | ' + (galeEl.textContent || '');
+    }
+  } catch(e) {}
+}
 
 // ===== SYSTEM =====
 async function fetchSystemStatus() {

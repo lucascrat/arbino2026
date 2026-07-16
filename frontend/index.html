@@ -190,6 +190,24 @@ tr:hover { background:rgba(255,255,255,.02); }
       <div class="card"><div class="label">IA Status</div><div class="value val-purple" id="statAiStatus" style="color:var(--purple)">Off</div><div class="sub" id="statAiModel">---</div></div>
     </div>
 
+    <!-- ANALYTICS -->
+    <div class="card" id="analyticsCard" style="cursor:pointer" onclick="toggleAnalytics()">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="label" style="margin:0">Analytics</span>
+        <span id="analyticsToggle" style="font-size:12px;color:var(--muted);font-weight:700">+</span>
+      </div>
+      <div id="analyticsContent" style="display:none;margin-top:8px;font-size:11px">
+        <div class="label" style="margin-bottom:4px">Gales por Horario</div>
+        <div id="analyticsGale" style="margin-bottom:8px;color:var(--muted)">---</div>
+        <div class="label" style="margin-bottom:4px">Melhores/Piores Horarios</div>
+        <div id="analyticsHours" style="margin-bottom:8px;color:var(--muted)">---</div>
+        <div class="label" style="margin-bottom:4px">Estado do Mercado</div>
+        <div id="analyticsMarket" style="margin-bottom:8px;color:var(--muted)">---</div>
+        <div class="label" style="margin-bottom:4px">Sequencias</div>
+        <div id="analyticsStreaks" style="color:var(--muted)">---</div>
+      </div>
+    </div>
+
     <!-- CONTENT -->
     <div class="content">
       <div class="left">
