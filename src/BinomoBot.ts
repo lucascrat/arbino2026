@@ -337,18 +337,26 @@ export class BinomoBot {
       }
 
       log.info('SINAL %s score=%d | motivos: %s', signal.direction, signal.score, signal.reasons.join(' | '));
-      const decision = this.risk.canTrade(signal.direction, signal.score);
-      if (!decision.allowed) {
-        log.info('Trade bloqueado: %s', decision.reason);
+      // Constrói contexto de tendência ANTES de chamar RiskManager
+      const trendCtx = trendBias(candles);
+      const indCtx = this.engine.getContext(candles);
+      const tradeDecision = this.risk.canTrade(signal.direction, signal.score, {
+        trend: trendCtx,
+        adx: indCtx.adx,
+        patterns: signal.patterns,
+        marketState: `${indCtx.adx >= 25 ? 'trending' : indCtx.adx < 20 ? 'ranging' : 'transition'}_${trendCtx.direction}_${indCtx.atrNormalized > 0.001 ? 'volatile' : 'calm'}`,
+      });
+      if (!tradeDecision.allowed) {
+        log.info('Trade bloqueado: %s', tradeDecision.reason);
         this.api.sendSignal(signal, null, false);
         continue;
       }
 
       const aiContext = {
-        trend: trendBias(candles),
+        trend: trendCtx,
         sentiment: this.getSentiment(),
         patterns: signal.patterns,
-        indicators: this.engine.getContext(candles),
+        indicators: indCtx,
       };
       const verdict = await this.ai.validate(signal, candles, aiContext);
 
@@ -373,18 +381,18 @@ export class BinomoBot {
 
       const entryPrice = this.feed.lastPrice;
       log.info('Preço de entrada: %s', entryPrice !== null ? entryPrice.toFixed(8) : 'n/a');
-      const result = await this.trader!.execute(signal, decision.entryValue);
+      const result = await this.trader!.execute(signal, tradeDecision.entryValue);
 
       // Envia trade para o frontend e captura o id gerado pelo banco
       const tradeResp = await this.api.sendTrade({
         sessionId: this.api.sessionId,
         direction: signal.direction,
-        entryValue: decision.entryValue,
+        entryValue: tradeDecision.entryValue,
         expiration: config.expirationSeconds,
         score: signal.score,
         asset: config.asset,
         entryPrice,
-        martingaleLevel: decision.martingaleLevel,
+        martingaleLevel: tradeDecision.martingaleLevel,
         patterns: signal.patterns,
         reasons: signal.reasons,
         aiApproved: true,

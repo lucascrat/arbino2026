@@ -12,13 +12,15 @@ export interface RiskDecision {
   martingaleAccumulated: number;
 }
 
+export interface TradeContext {
+  trend: { direction: Direction; strength: number };
+  adx: number;
+  patterns: string[];
+  marketState: string;
+}
+
 /**
  * Gestao de banca: limites diarios, stop-loss, cooldown progressivo e martingale.
- *
- * Melhorias:
- * - Sizing por score: sinais de score mais alto ganham entrada maior
- * - Cooldown progressivo: apos perdas consecutivas, cooldown aumenta
- * - Take-profit diario: para apos atingir lucro alvo
  */
 export class RiskManager {
   private tradesToday = 0;
@@ -29,7 +31,7 @@ export class RiskManager {
   private dayKey = this.todayKey();
   private martingaleAccumulated = 0;
 
-  canTrade(direction: Direction, signalScore = 80): RiskDecision {
+  canTrade(direction: Direction, signalScore = 80, tradeCtx?: TradeContext): RiskDecision {
     this.rolloverIfNeeded();
 
     if (this.tradesToday >= config.maxDailyTrades) {
@@ -39,35 +41,39 @@ export class RiskManager {
       return { allowed: false, reason: 'stop-loss diario atingido - pare por hoje', entryValue: 0, martingaleLevel: 0, martingaleAccumulated: 0 };
     }
 
-    // Take-profit: para apos lucro alvo (0 = desligado)
     const profitTarget = config.maxDailyProfit;
     if (profitTarget > 0 && this.profitToday >= profitTarget) {
       return { allowed: false, reason: `take-profit diario atingido (R$ ${this.profitToday.toFixed(2)} / ${profitTarget.toFixed(2)})`, entryValue: 0, martingaleLevel: 0, martingaleAccumulated: 0 };
     }
 
-    // Cooldown progressivo: apos perdas consecutivas, aumenta
+    // Filtro de tendencia: nao opera contra tendencia forte
+    if (tradeCtx && tradeCtx.trend.strength > 0.25 && tradeCtx.adx >= 25) {
+      if (direction !== tradeCtx.trend.direction) {
+        return {
+          allowed: false,
+          reason: `CONTRA TENDENCIA bloqueado: sinal ${direction} vs tendencia ${tradeCtx.trend.direction} (forca ${tradeCtx.trend.strength.toFixed(2)}, ADX ${tradeCtx.adx})`,
+          entryValue: 0, martingaleLevel: 0, martingaleAccumulated: 0,
+        };
+      }
+    }
+
     const dynamicCooldown = this.getDynamicCooldown();
     const elapsed = (Date.now() - this.lastTradeAt) / 1000;
     if (this.lastTradeAt > 0 && elapsed < dynamicCooldown) {
       return {
         allowed: false,
         reason: `cooldown: aguarde ${(dynamicCooldown - elapsed).toFixed(0)}s (${this.consecutiveLosses} perdas consec)`,
-        entryValue: 0,
-        martingaleLevel: 0,
-        martingaleAccumulated: 0,
+        entryValue: 0, martingaleLevel: 0, martingaleAccumulated: 0,
       };
     }
 
     const mgLevel = Math.min(this.consecutiveLosses, config.martingaleLevels);
 
-    // Sizing por score: score 100 = 1.5x base, score 80 = 1.0x base
-    const scoreMultiplier = 1 + Math.max(0, (signalScore - 80) / 40);
-
-    let entry = Math.round(config.entryValue * scoreMultiplier);
+    let entry = config.entryValue;
     if (mgLevel > 0) {
-      entry = Math.round(config.entryValue * scoreMultiplier * Math.pow(config.martingaleMultiplier, mgLevel));
+      entry = Math.round(config.entryValue * Math.pow(config.martingaleMultiplier, mgLevel));
       this.martingaleAccumulated += entry;
-      log.warn('GALE nivel %d: entrada R$ %s (score %d -> %.2fx) | acumulado: R$ %s', mgLevel, entry.toFixed(2), signalScore, scoreMultiplier, this.martingaleAccumulated.toFixed(2));
+      log.warn('GALE nivel %d: entrada R$ %s | acumulado: R$ %s', mgLevel, entry.toFixed(2), this.martingaleAccumulated.toFixed(2));
     } else {
       this.martingaleAccumulated = entry;
     }
@@ -79,15 +85,13 @@ export class RiskManager {
       return {
         allowed: false,
         reason: `Gale maximo excedido (${config.martingaleLevels} niveis). Reset.`,
-        entryValue: 0,
-        martingaleLevel: 0,
-        martingaleAccumulated: 0,
+        entryValue: 0, martingaleLevel: 0, martingaleAccumulated: 0,
       };
     }
 
     return {
       allowed: true,
-      reason: mgLevel > 0 ? `Gale ${mgLevel} (score ${signalScore}, ${scoreMultiplier.toFixed(2)}x)` : `OK (score ${signalScore}, ${scoreMultiplier.toFixed(2)}x)`,
+      reason: mgLevel > 0 ? `Gale ${mgLevel} (entrada R$ ${entry.toFixed(2)})` : `OK (R$ ${entry.toFixed(2)})`,
       entryValue: entry,
       martingaleLevel: mgLevel,
       martingaleAccumulated: this.martingaleAccumulated,

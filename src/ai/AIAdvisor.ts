@@ -196,6 +196,41 @@ Acerto geral: ${overallWinRate.toFixed(0)}% (${e.totalWins}W / ${e.totalLosses}L
     return section;
   }
 
+  private buildExperienceStats(): string {
+    const e = this.experience;
+    if (e.totalApproved < 5) return '';
+    const wr = ((e.totalWins / e.totalApproved) * 100).toFixed(0);
+    const byDir = new Map<string, { wins: number; total: number }>();
+    for (const entry of e.entries) {
+      if (entry.totalTrades < 2) continue;
+      const d = entry.direction;
+      const cur = byDir.get(d) || { wins: 0, total: 0 };
+      cur.wins += entry.wins;
+      cur.total += entry.totalTrades;
+      byDir.set(d, cur);
+    }
+    let stats = `\n\n## SEU APRENDIZADO ACUMULADO (${e.totalApproved} trades, ${wr}% acerto)`;
+    for (const [dir, data] of byDir) {
+      const dirWR = ((data.wins / data.total) * 100).toFixed(0);
+      stats += `\n- ${dir}: ${dirWR}% (${data.wins}W/${data.total - data.wins}L em ${data.total} trades)`;
+    }
+    const best = [...e.entries].filter(x => x.totalTrades >= 3).sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+    if (best.length > 0) {
+      stats += '\nMelhores padroes:\n';
+      for (const b of best) {
+        stats += `  ${b.direction} ${b.scoreRange} [${b.patterns.join(', ')}]: ${(b.winRate * 100).toFixed(0)}%\n`;
+      }
+    }
+    const worst = [...e.entries].filter(x => x.totalTrades >= 3).sort((a, b) => a.winRate - b.winRate).slice(0, 2);
+    if (worst.length > 0) {
+      stats += 'Piores padroes (evitar):\n';
+      for (const w of worst) {
+        stats += `  ${w.direction} ${w.scoreRange} [${w.patterns.join(', ')}]: ${(w.winRate * 100).toFixed(0)}%\n`;
+      }
+    }
+    return stats;
+  }
+
   /** Alimenta a IA com dados analiticos externos (melhores horarios, gales, mercado) */
   setAnalytics(summary: string): void {
     this.analyticsExternal = summary;
@@ -289,10 +324,46 @@ Responda APENAS JSON:
   }
 
   private async queryLLM(prompt: string): Promise<AIVerdict> {
+    const experienceStats = this.buildExperienceStats();
     const messages: ChatMessage[] = [
       {
         role: 'system',
-        content: 'Voce e uma trader profissional senior com 15 anos de experiencia em opcoes binarias. Sua especialidade e analisar graficos em timeframes curtos (15s-60s) e identificar padroes com alta precisao. Voce e independente, analitica e adaptavel — desenvolve estrategias para cada tipo de mercado (tendencias, lateralizacao, alta volatilidade). Nao tem medo de errar: cada erro e um aprendizado que torna suas analises melhores. Seja tecnica, confie na sua leitura do grafico e nos indicadores. Responda sempre em JSON valido.',
+        content: `Voce e uma trader profissional senior com 15 anos de experiencia em opcoes binarias. Sua especialidade e analisar graficos em timeframes curtos (15s-60s) e identificar padroes com alta precisao.
+
+## ESTRATEGIAS POR TIPO DE MERCADO
+
+### Mercado em Tendencia Forte (ADX >= 25)
+- REGRA PRINCIPAL: SEMPRE opere a favor da tendencia. NUNCA opere contra.
+- CALL se tendencia for CALL (EMA9 > EMA21), PUT se for PUT (EMA9 < EMA21).
+- Sinais contra a tendencia precisam de score >= 95 e padrao de reversao forte (Engulfing + pinbar) para serem considerados.
+- Use MACD e ADX para confirmar forca da tendencia.
+- Ignore RSI sobrecomprado/sobrevendido em tendencia forte (pode ficar extremo por muito tempo).
+
+### Mercado Lateral/Ranging (ADX < 20)
+- Foco em reversoes nos extremos: CALL no suporte, PUT na resistencia.
+- Bollinger Bands e RSI sao mais confiaveis nesse cenario.
+- Procure por pinbars, hammers, e estrelas nos extremos.
+- Prefira operar quando o preco toca a banda de Bollinger.
+- Cuidado com rompimentos falsos.
+
+### Mercado em Transicao (ADX 20-25)
+- Abordagem mista: observe se a tendencia esta se formando ou se desfazendo.
+- Padroes de continuacao sao mais arriscados. Prefira esperar confirmacao.
+- Se Stoch e MACD concordam, o sinal e mais confiavel.
+
+### Mercado Volatil (ATR > 0.001% do preco)
+- Reduza confianca. Volatilidade alta significa mais falsos sinais.
+- Exija pelo menos 3 indicadores alinhados.
+- Evite operar contra o momentum.
+
+## REGRAS GERAIS
+- NUNCA opere contra tendencia forte (ADX >= 25) a menos que score >= 95 com padrao de reversao.
+- Confluencia de 3+ indicadores aumenta confiabilidade significativamente.
+- Sentimento de multidao > 80% em uma direcao = vies contrarian (a maioria perde).
+- Cada trade e uma decisao independente. Confie na sua analise, nao no historico.
+- Voce aprende com cada resultado e melhora continuamente.
+${experienceStats}
+Responda APENAS em JSON valido.`,
       },
       { role: 'user', content: prompt },
     ];
