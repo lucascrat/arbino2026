@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { service } from '../logger.js';
 import type { Candle, Direction, Signal } from '../types.js';
 import type { MarketSentiment, SignalContext } from '../analysis/SignalEngine.js';
+import type { BotParams, StrategySuggestion } from './AIStrategyManager.js';
 
 const log = service('AIAdvisor');
 
@@ -52,11 +53,14 @@ export class AIAdvisor {
   private cache = new Map<string, AIVerdict>();
   private readonly cacheTtlMs = 30_000;
 
+  private strategyCallCount = 0;
+  private postTradeCallCount = 0;
+
   // Learning
   private experiencePath: string;
   private experience: ExperienceDb;
   private lastSignalKey = '';
-  private readonly maxExperienceEntries = 200;
+  private readonly maxExperienceEntries = 300;
   private dirty = false;
 
   // Analytics externos (alimentados pelo bot)
@@ -286,6 +290,8 @@ Acerto geral: ${overallWinRate.toFixed(0)}% (${e.totalWins}W / ${e.totalLosses}L
 ### Dados do mercado
 - Ativo: ${config.asset} (indice sintetico)
 - Timeframe: ${config.candleTimeframeSeconds}s  |  Expiracao: ${config.expirationSeconds}s
+- Score minimo: ${config.minSignalScore}  |  Gale: ${config.martingaleLevels}x${config.martingaleMultiplier}
+- Horario UTC: ${new Date().getUTCHours()}h
 
 ### Candlestick (ultimos 15)
 ${recentCandles}
@@ -410,6 +416,9 @@ Analise o sinal proposto e decida se e um trade de alta probabilidade. Voce NAO 
 
 Lembre-se: o melhor trade muitas vezes e aquele que voce NAO faz. Disciplina supera impulsividade. Consistencia supera emocao. Paciencia supera pressa. Voce e um profissional, nao um apostador.
 
+## VOCE E AUTONOMO
+Voce esta no comando total de um bot autonomo. Suas decisoes definem parametros como expiracao, horarios, gales e score minimo. Cada trade que voce aprova ou bloqueia ensina o sistema. Seus acertos e erros sao analisados para otimizar a estrategia continuamente. Quanto mais trades voce analisar, mais inteligente o bot se torna.
+
 ${experienceStats}
 Responda APENAS em JSON valido.`,
       },
@@ -512,7 +521,7 @@ Responda APENAS em JSON valido.`,
     }
   }
 
-  stats(): { calls: number; enabled: boolean; approved: number; blocked: number; blockRate: number; experienceTrades: number; winRate: number } {
+  stats(): { calls: number; enabled: boolean; approved: number; blocked: number; blockRate: number; experienceTrades: number; winRate: number; strategyCalls: number; postTradeCalls: number } {
     return {
       calls: this.callCount,
       enabled: this.enabled,
@@ -521,6 +530,222 @@ Responda APENAS em JSON valido.`,
       blockRate: this.callCount > 0 ? this.blockCount / this.callCount : 0,
       experienceTrades: this.experience.totalApproved,
       winRate: this.experience.totalApproved > 0 ? (this.experience.totalWins / this.experience.totalApproved) * 100 : 0,
+      strategyCalls: this.strategyCallCount,
+      postTradeCalls: this.postTradeCallCount,
     };
+  }
+
+  // ========== ESTRATEGIA AUTONOMA (AI Strategy Manager) ==========
+
+  private buildSystemPromptStrategy(): string {
+    return `Voce e o arquiteto-chefe de estrategia de um bot de trading autonomo de opcoes binarias. Sua responsabilidade e OTIMIZAR todos os parametros do bot para maximizar lucro liquido.
+
+## SEU PAPEL
+- Voce controla os parametros de trading: tempo de expiracao, horarios de sessao, score minimo, niveis de gale (martingale), multiplicador do gale, e cooldown entre trades
+- Seu objetivo e encontrar a combinacao ideal de parametros para o ativo sintetico atual
+- Cada decisao deve ser baseada em dados: win rate, gale rate, lucro liquido, performance por hora, performance por estado de mercado
+- Voce e responsavel por equilibrar exploracao (testar novos parametros) e exploracao (manter o que funciona)
+
+## PARAMETROS QUE VOCE CONTROLA
+- expirationSeconds (15-300): Tempo de expiracao em segundos. Mais curto = mais rapido, menos precisao. Mais longo = mais preciso, menos oportunidades.
+- sessionStartHour (0-23): Hora de inicio da sessao de trading (UTC).
+- sessionEndHour (0-23): Hora de fim da sessao de trading (UTC).
+- minSignalScore (50-100): Score minimo para o SignalEngine aceitar um sinal. Mais alto = menos trades, maior qualidade.
+- martingaleLevels (1-10): Quantos niveis de gale (martingale) tentar antes de aceitar perda.
+- martingaleMultiplier (1.5-4.0): Multiplicador do valor de entrada em cada nivel de gale.
+- cooldownSeconds (5-300): Tempo de espera entre trades.
+
+## REGRAS DE OTIMIZACAO
+1. **Analise primeiro a performance atual**: Win rate geral, win rate por hora, performance por estado de mercado, taxa de gale
+2. **Mude APENAS 1-2 parametros por vez**: Mudar tudo de uma vez impede saber o que funcionou
+3. **Se win rate > 60%**: Considere aumentar expiracao ou score minimo para filtros mais rigorosos
+4. **Se win rate < 45%**: Considere diminuir expiracao ou score minimo para mais oportunidades
+5. **Se gale rate > 40%**: Os sinais estao fracos - aumente score minimo ou troque horario
+6. **Se gale rate < 10% e win rate > 55%**: Os sinais sao fortes - pode aumentar gale levels para capturar mais lucro
+7. **Horarios com win rate < 35%**: Exclua esses horarios da sessao
+8. **Horarios com win rate > 60%**: Foque nesses horarios
+9. **Mercados 'trending'**: Use expiracao mais longa (60s+) para capturar tendencia
+10. **Mercados 'ranging'**: Use expiracao mais curta (15-30s) para scalping
+11. **entryValue SEMPRE = 5**: O usuario definiu entrada minima de R$5,00. Nao altere.
+12. **Nao mude parametros a cada ciclo**: Deixe o novo setup rodar por alguns trades antes de avaliar
+13. **Respeite limites**: Nunca sugira valores fora dos ranges especificados
+
+## FORMATO DE RESPOSTA
+Responda APENAS JSON:
+{
+  "changes": {
+    "expirationSeconds": novo_valor_ou_null,
+    "sessionStartHour": novo_valor_ou_null,
+    "sessionEndHour": novo_valor_ou_null,
+    "minSignalScore": novo_valor_ou_null,
+    "martingaleLevels": novo_valor_ou_null,
+    "martingaleMultiplier": novo_valor_ou_null,
+    "cooldownSeconds": novo_valor_ou_null
+  },
+  "reasoning": "explicacao tecnica em portugues do por que destas mudancas (max 300 chars)",
+  "confidence": 0-100
+}
+
+Se a estrategia atual ja esta boa, retorne changes vazio: {}`;
+  }
+
+  private buildSystemPromptPostTrade(): string {
+    return `Voce e um analista de trades senior. Sua funcao e analisar trades completados e extrair aprendizados para melhorar o bot.
+
+## SEU TRABALHO
+- Receba um lote de trades recentes com seus resultados
+- Identifique padroes nos erros: Horarios ruins, padroes de vela que falham, mercados onde o bot perde
+- Sugira ajustes especificos para evitar erros similares
+- Aprendizados devem ser acionaveis: "Evite CALL quando RSI > 70 em mercado ranging" ao inves de "seja mais cuidadoso"
+
+## REGRAS
+1. Analise cada trade individualmente antes de generalizar
+2. Procure correlacoes: Perdeu em CALL as 21h? Perdeu em ranging_PUT_calm?
+3. Sugira acoes especificas e mensuraveis
+4. Seja honesto sobre incerteza: se os dados sao insuficientes, diga
+
+## FORMATO DE RESPOSTA
+Responda APENAS JSON:
+{
+  "insights": [
+    "aprendizado acionavel 1",
+    "aprendizado acionavel 2"
+  ],
+  "avoidPatterns": ["padrao a evitar 1", "padrao a evitar 2"],
+  "preferPatterns": ["padrao a priorizar 1", "padrao a priorizar 2"],
+  "summary": "resumo da analise (max 200 chars)"
+}`;
+  }
+
+  async suggestStrategy(analyticsSummary: string, currentStrategy: string, recentBatch: string): Promise<StrategySuggestion> {
+    if (!this.enabled) {
+      return { changes: {}, reasoning: 'IA desativada', confidence: 0 };
+    }
+
+    const prompt = `## Estrategia atual
+${currentStrategy}
+
+## Analytics do banco
+${analyticsSummary || 'Sem dados de analytics'}
+
+## Historico recente
+${recentBatch || 'Sem trades recentes'}
+
+Com base nestes dados, quais parametros voce alteraria para maximizar o lucro?`;
+    this.strategyCallCount++;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: this.buildSystemPromptStrategy() },
+      { role: 'user', content: prompt },
+    ];
+
+    try {
+      const content = await this.queryLLMText(messages, 500);
+      const parsed = JSON.parse(content) as { changes?: Record<string, number | null>; reasoning?: string; confidence?: number };
+      const changes: Partial<BotParams> = {};
+      if (parsed.changes) {
+        for (const [k, v] of Object.entries(parsed.changes)) {
+          if (v != null && k in this.defaultParams()) {
+            (changes as Record<string, number>)[k] = v;
+          }
+        }
+      }
+      const result: StrategySuggestion = {
+        changes,
+        reasoning: parsed.reasoning?.slice(0, 300) || 'sem explicacao',
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 50,
+      };
+      log.info('Strategy suggestion: %s', JSON.stringify(result.changes));
+      return result;
+    } catch (err) {
+      log.warn('Falha ao obter sugestao de estrategia: %s', (err as Error).message);
+      return { changes: {}, reasoning: 'falha na consulta', confidence: 0 };
+    }
+  }
+
+  async analyzeTrades(trades: {
+    direction: Direction;
+    win: boolean;
+    martingaleLevel: number;
+    score: number;
+    patterns: string[];
+    marketState: string;
+    hour: number;
+  }[]): Promise<{ insights: string[]; avoidPatterns: string[]; preferPatterns: string[]; summary: string } | null> {
+    if (!this.enabled || trades.length === 0) return null;
+    this.postTradeCallCount++;
+
+    const tradeLines = trades.map((t, i) =>
+      `Trade ${i + 1}: ${t.direction} ${t.win ? 'WIN' : 'LOSS'} score=${t.score} gale=${t.martingaleLevel} padroes=[${t.patterns.slice(0, 3).join(',')}] estado=${t.marketState} hora=${t.hour}h`
+    ).join('\n');
+
+    const prompt = `Analise estes trades recentes e extraia aprendizados para melhorar o bot:\n\n${tradeLines}`;
+    const messages: ChatMessage[] = [
+      { role: 'system', content: this.buildSystemPromptPostTrade() },
+      { role: 'user', content: prompt },
+    ];
+
+    try {
+      const content = await this.queryLLMText(messages, 500);
+      const parsed = JSON.parse(content) as { insights?: string[]; avoidPatterns?: string[]; preferPatterns?: string[]; summary?: string };
+      log.info('Post-trade analysis: %s', parsed.summary || 'sem resumo');
+      return {
+        insights: parsed.insights?.slice(0, 5) || [],
+        avoidPatterns: parsed.avoidPatterns?.slice(0, 3) || [],
+        preferPatterns: parsed.preferPatterns?.slice(0, 3) || [],
+        summary: parsed.summary?.slice(0, 200) || '',
+      };
+    } catch (err) {
+      log.warn('Falha na analise pos-trade: %s', (err as Error).message);
+      return null;
+    }
+  }
+
+  private defaultParams(): BotParams {
+    return {
+      expirationSeconds: 30,
+      sessionStartHour: 0,
+      sessionEndHour: 23,
+      minSignalScore: 80,
+      martingaleLevels: 3,
+      martingaleMultiplier: 2,
+      cooldownSeconds: 15,
+      entryValue: 5,
+    };
+  }
+
+  private async queryLLMText(messages: ChatMessage[], maxTokens: number): Promise<string> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
+
+      const response = await fetch(`${this.endpoint}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature: 0.7,
+          max_tokens: maxTokens,
+          response_format: { type: 'json_object' },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'unknown');
+        throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`);
+      }
+
+      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Resposta vazia da IA');
+      return content;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

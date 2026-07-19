@@ -27,6 +27,8 @@ export interface BotState {
   martingaleLevels: number;
   martingaleMultiplier: number;
   cooldownSeconds: number;
+  sessionStartHour: number;
+  sessionEndHour: number;
   maxDailyTrades: number;
   maxDailyLoss: number;
   maxDailyProfit: number;
@@ -38,6 +40,8 @@ export interface BotState {
   balance: number | null;
   lastSignal: unknown;
   lastTrade: unknown;
+  strategyVersion: number;
+  strategyReasoning: string;
 }
 
 export interface DiagnosticInfo {
@@ -114,6 +118,8 @@ export class ApiServer {
       martingaleLevels: config.martingaleLevels,
       martingaleMultiplier: config.martingaleMultiplier,
       cooldownSeconds: config.cooldownSeconds,
+      sessionStartHour: config.sessionStartHour ?? 0,
+      sessionEndHour: config.sessionEndHour ?? 23,
       maxDailyTrades: config.maxDailyTrades,
       maxDailyLoss: config.maxDailyLoss,
       maxDailyProfit: config.maxDailyProfit,
@@ -125,6 +131,8 @@ export class ApiServer {
       balance: null,
       lastSignal: null,
       lastTrade: null,
+      strategyVersion: 0,
+      strategyReasoning: '',
     };
   }
 
@@ -144,7 +152,8 @@ export class ApiServer {
       const isPublic = ['/api/auth/login', '/api/health', '/api/vnc/health'].includes(p)
         || p === '/api/events'
         || (p === '/api/settings' && req.method === 'GET')
-        || p === '/api/analytics';
+        || p === '/api/analytics'
+        || p === '/api/state/update';
       if (!isApi || isPublic) { next(); return; }
       const token = (req.headers.authorization || '').replace('Bearer ', '');
       if (!token || !this.authTokens.has(token)) {
@@ -450,6 +459,44 @@ export class ApiServer {
 
     this.app.get('/api/state', (_req, res) => {
       res.json(this.getState());
+    });
+
+    // Endpoint para o bot atualizar estado (estrategia, etc)
+    this.app.post('/api/state/update', (req, res) => {
+      const { strategyVersion, strategyReasoning } = req.body || {};
+      if (strategyVersion != null) this.state.strategyVersion = strategyVersion;
+      if (strategyReasoning != null) this.state.strategyReasoning = strategyReasoning;
+      this.state.expiration = config.expirationSeconds;
+      this.state.minSignalScore = config.minSignalScore;
+      this.state.martingaleLevels = config.martingaleLevels;
+      this.state.martingaleMultiplier = config.martingaleMultiplier;
+      this.state.cooldownSeconds = config.cooldownSeconds;
+      res.json({ ok: true });
+    });
+
+    // Endpoint para a IA consultar seu estado de estrategia
+    this.app.get('/api/ai/strategy', (_req, res) => {
+      const s = this.state;
+      res.json({
+        version: s.strategyVersion,
+        reasoning: s.strategyReasoning,
+        params: {
+          expiration: s.expiration,
+          minSignalScore: s.minSignalScore,
+          martingaleLevels: s.martingaleLevels,
+          martingaleMultiplier: s.martingaleMultiplier,
+          cooldownSeconds: s.cooldownSeconds,
+          sessionStartHour: s.sessionStartHour,
+          sessionEndHour: s.sessionEndHour,
+        },
+      });
+    });
+
+    this.app.get('/api/ai/decisions', (req, res) => {
+      const type = req.query.type as string | undefined;
+      const limit = Math.min(50, parseInt(req.query.limit as string) || 20);
+      const decisions = this.db.getAIDecisions(limit, type);
+      res.json(decisions);
     });
 
     // Endpoint para o bot enviar eventos em tempo real

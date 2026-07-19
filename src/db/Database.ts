@@ -221,6 +221,18 @@ export class AppDatabase {
         stack TEXT,
         created_at INTEGER NOT NULL
       );
+
+      -- Decisoes da IA (estrategia, aprendizado)
+      CREATE TABLE IF NOT EXISTS ai_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_type TEXT NOT NULL,
+        params_before TEXT,
+        params_after TEXT,
+        reasoning TEXT,
+        summary TEXT,
+        trade_id INTEGER,
+        created_at INTEGER NOT NULL
+      );
     `);
 
     // --- Indices ---
@@ -236,6 +248,8 @@ export class AppDatabase {
       CREATE INDEX IF NOT EXISTS idx_balance_session ON balance_history(session_id);
       CREATE INDEX IF NOT EXISTS idx_error_date ON error_log(created_at);
       CREATE INDEX IF NOT EXISTS idx_error_level ON error_log(level);
+      CREATE INDEX IF NOT EXISTS idx_ai_decisions_type ON ai_decisions(decision_type);
+      CREATE INDEX IF NOT EXISTS idx_ai_decisions_time ON ai_decisions(created_at);
     `);
 
     // Migracoes incrementais (colunas adicionadas posteriormente)
@@ -565,6 +579,49 @@ export class AppDatabase {
       'SELECT COUNT(*) as c FROM trades WHERE placed_at >= ? AND placed_at <= ? AND martingale_level > 0'
     ).get(start, end) as { c: number };
     return row.c;
+  }
+
+  // ==================== AI DECISIONS ====================
+
+  insertAIDecision(decision: {
+    decisionType: string;
+    paramsBefore?: Record<string, unknown>;
+    paramsAfter?: Record<string, unknown>;
+    reasoning?: string;
+    summary?: string;
+    tradeId?: number;
+  }): number {
+    const result = this.db.prepare(
+      `INSERT INTO ai_decisions (decision_type, params_before, params_after, reasoning, summary, trade_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      decision.decisionType,
+      decision.paramsBefore ? JSON.stringify(decision.paramsBefore) : null,
+      decision.paramsAfter ? JSON.stringify(decision.paramsAfter) : null,
+      decision.reasoning ?? null,
+      decision.summary ?? null,
+      decision.tradeId ?? null,
+      Date.now()
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  getAIDecisions(limit = 20, decisionType?: string): {
+    id: number; decisionType: string; paramsBefore: string | null; paramsAfter: string | null;
+    reasoning: string | null; summary: string | null; tradeId: number | null; created_at: number;
+  }[] {
+    let query = 'SELECT * FROM ai_decisions';
+    const params: unknown[] = [];
+    if (decisionType) {
+      query += ' WHERE decision_type=?';
+      params.push(decisionType);
+    }
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+    return this.db.prepare(query).all(...params) as {
+      id: number; decisionType: string; paramsBefore: string | null; paramsAfter: string | null;
+      reasoning: string | null; summary: string | null; tradeId: number | null; created_at: number;
+    }[];
   }
 
   // ==================== ERROR LOG ====================

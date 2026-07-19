@@ -10,6 +10,8 @@ import { RiskManager } from './risk/RiskManager.js';
 import { Backtester, runBacktest } from './backtest/Backtester.js';
 import { AIAdvisor } from './ai/AIAdvisor.js';
 import { BotApiClient, type DiagnosticInfo } from './ai/BotApiClient.js';
+import { AIStrategyManager } from './ai/AIStrategyManager.js';
+import type { BotParams } from './ai/AIStrategyManager.js';
 import { trendBias } from './analysis/CandlePatterns.js';
 import path from 'node:path';
 
@@ -23,10 +25,33 @@ export class BinomoBot {
   private risk = new RiskManager();
   private ai = new AIAdvisor();
   private api = new BotApiClient();
+  private strategyManager!: AIStrategyManager;
   private trader?: Trader;
   private running = false;
   private lastSignalTime = 0;
   private csvPath = path.join(config.logsDir, 'candles.csv');
+  private lastAnalyticsTime = 0;
+  private analyticsIntervalMs = 60000;
+  private pendingPostTrade: {
+    direction: 'CALL' | 'PUT';
+    win: boolean;
+    martingaleLevel: number;
+    entryValue: number;
+    marketState: string;
+    hour: number;
+    score: number;
+    patterns: string[];
+  }[] = [];
+  private lastPostTradeAnalysis = 0;
+  private lastLoggedStrategyVersion = -1;
+  // Contexto do ultimo trade para registro pos-trade
+  private lastTradeContext: {
+    patterns: string[];
+    marketState: string;
+    score: number;
+    direction: 'CALL' | 'PUT';
+    entryValue: number;
+  } | null = null;
 
   private sendDiag(): void {
     const rawLog = this.feed.getRawLog();
@@ -49,9 +74,124 @@ export class BinomoBot {
     this.api.sendDiagnostic(diag);
   }
 
+  /** Aplica parametros da estrategia da IA no config e subsystems */
+  private applyStrategyParams(params?: BotParams): void {
+    const p = params ?? this.strategyManager.getParams();
+    const cfg = config as Record<string, unknown>;
+    if (p.expirationSeconds !== config.expirationSeconds) {
+      cfg['expirationSeconds'] = p.expirationSeconds;
+      log.info('IA alterou expiracao para %ds', p.expirationSeconds);
+    }
+    if (p.minSignalScore !== config.minSignalScore) {
+      cfg['minSignalScore'] = p.minSignalScore;
+      this.engine = new SignalEngine(p.minSignalScore);
+      log.info('IA alterou score minimo para %d', p.minSignalScore);
+    }
+    if (p.martingaleLevels !== config.martingaleLevels || p.martingaleMultiplier !== config.martingaleMultiplier) {
+      cfg['martingaleLevels'] = p.martingaleLevels;
+      cfg['martingaleMultiplier'] = p.martingaleMultiplier;
+      this.risk = new RiskManager();
+      log.info('IA alterou gales: %d niveis x%s', p.martingaleLevels, p.martingaleMultiplier);
+    }
+    if (p.cooldownSeconds !== config.cooldownSeconds) {
+      cfg['cooldownSeconds'] = p.cooldownSeconds;
+      this.risk = new RiskManager();
+      log.info('IA alterou cooldown para %ds', p.cooldownSeconds);
+    }
+    if (p.sessionStartHour !== config.sessionStartHour || p.sessionEndHour !== config.sessionEndHour) {
+      cfg['sessionStartHour'] = p.sessionStartHour;
+      cfg['sessionEndHour'] = p.sessionEndHour;
+      this.sessionFilter = new SessionFilter();
+      log.info('IA alterou sessao para %dh-%dh', p.sessionStartHour, p.sessionEndHour);
+    }
+    cfg['entryValue'] = p.entryValue;
+  }
+
+  /** Executa ciclo de otimizacao de estrategia via IA */
+  private async runStrategyOptimization(): Promise<void> {
+    if (!this.ai.stats().enabled) return;
+    try {
+      const analyticsRes = await fetch('http://localhost:3456/api/analytics', { signal: AbortSignal.timeout(5000) });
+      const analyticsData = await analyticsRes.json();
+      const parts: string[] = [];
+
+      if (analyticsData.galeStats?.totalGales > 0) {
+        const gs = analyticsData.galeStats;
+        let dist = '';
+        for (const [k, v] of Object.entries(gs.distribution)) dist += `${k.replace('nivel_', 'G')}=${v}, `;
+        parts.push(`GALES: total=${gs.totalGales} media=${gs.avgLevel} ${dist}`);
+      }
+      if (analyticsData.hourlyPerformance?.length > 0) {
+        const valid = analyticsData.hourlyPerformance.filter((h: { total: number }) => h.total >= 2);
+        if (valid.length > 0) {
+          const best = [...valid].sort((a: { winRate: number }, b: { winRate: number }) => b.winRate - a.winRate).slice(0, 3);
+          const worst = [...valid].sort((a: { winRate: number }, b: { winRate: number }) => a.winRate - b.winRate).slice(0, 3);
+          parts.push(`MELHORES: ${best.map((h: { hour: number; winRate: number; wins: number; total: number }) => `${h.hour}h=${h.winRate}%(${h.wins}W/${h.total})`).join(', ')}`);
+          parts.push(`PIORES: ${worst.map((h: { hour: number; winRate: number; wins: number; total: number }) => `${h.hour}h=${h.winRate}%(${h.wins}W/${h.total})`).join(', ')}`);
+        }
+      }
+      if (analyticsData.marketStateStats?.length > 0) {
+        parts.push(`MERCADOS: ${analyticsData.marketStateStats.slice(0, 5).map((m: { state: string; winRate: number; total: number }) => `${m.state}=${m.winRate}%(${m.total}t)`).join(', ')}`);
+      }
+
+      const analyticsStr = parts.join('\n');
+      const decision = await this.strategyManager.optimize(analyticsStr);
+
+      if (decision) {
+        this.applyStrategyParams(decision.paramsAfter);
+        if (this.lastLoggedStrategyVersion !== decision.version) {
+          this.lastLoggedStrategyVersion = decision.version;
+          log.info('=== NOVA ESTRATEGIA v%d pela IA ===', decision.version);
+          log.info('Motivo: %s', decision.reasoning);
+          this.api.sendLog('info', 'IA', `alterou estrategia v${decision.version}: ${decision.reasoning}`);
+          try {
+            await fetch('http://localhost:3456/api/state/update', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ strategyVersion: decision.version, strategyReasoning: decision.reasoning }),
+              signal: AbortSignal.timeout(2000),
+            });
+          } catch { /* nao critico */ }
+        }
+      }
+
+      // Verificacao urgente de seguranca (3+ perdas consecutivas)
+      if (this.strategyManager.needsUrgentReview()) {
+        const consecLosses = this.strategyManager.getConsecutiveLosses();
+        log.warn('%d PERDAS CONSECUTIVAS - IA fara analise de emergencia', consecLosses);
+        this.api.sendLog('warn', 'IA', `ALERTA: ${consecLosses} perdas consecutivas`);
+      }
+    } catch (err) {
+      log.debug('Otimizacao de estrategia indisponivel: %s', (err as Error).message);
+    }
+  }
+
+  /** Envia lote de trades para analise pos-trade pela IA */
+  private async runPostTradeAnalysis(): Promise<void> {
+    if (!this.ai.stats().enabled || this.pendingPostTrade.length < 3) return;
+    const batch = this.pendingPostTrade.splice(0);
+    try {
+      const analysis = await this.ai.analyzeTrades(batch);
+      if (analysis && analysis.insights.length > 0) {
+        log.info('=== APRENDIZADO POS-TRADE ===');
+        for (const insight of analysis.insights) log.info('  Insight: %s', insight);
+        if (analysis.avoidPatterns.length > 0) log.info('  Evitar: %s', analysis.avoidPatterns.join(', '));
+        if (analysis.preferPatterns.length > 0) log.info('  Preferir: %s', analysis.preferPatterns.join(', '));
+        this.api.sendLog('info', 'IA', `aprendizado: ${analysis.summary}`);
+      }
+    } catch (err) {
+      log.warn('Falha na analise pos-trade: %s', (err as Error).message);
+      this.pendingPostTrade.unshift(...batch);
+    }
+  }
+
   async run(mode: RunMode = config.mode): Promise<void> {
     // Carrega settings do banco ANTES de logar as configs
     await this.loadSettingsFromDb();
+    this.strategyManager = new AIStrategyManager({
+      suggestStrategy: (analytics, current, batch) => this.ai.suggestStrategy(analytics, current, batch),
+    });
+    this.applyStrategyParams();
     
     log.info('Iniciando bot no modo: %s | TF candle=%ds | exp=%ds | asset=%s', mode, config.candleTimeframeSeconds, config.expirationSeconds, config.asset);
     log.info('IA: %s | Score min: %d | Entrada: R$ %s | Gale: %d niveis (%sx)', config.aiEnabled ? 'ATIVA' : 'OFF', config.minSignalScore, config.entryValue.toFixed(2), config.martingaleLevels, config.martingaleMultiplier);
@@ -257,7 +397,7 @@ export class BinomoBot {
       if (!res.ok) return;
       const settings = await res.json() as Record<string, string>;
       const cfg = config as Record<string, unknown>;
-      const numKeys = ['entryValue', 'minSignalScore', 'expirationSeconds', 'candleTimeframeSeconds', 'martingaleLevels', 'martingaleMultiplier', 'cooldownSeconds', 'maxDailyTrades', 'maxDailyLoss', 'maxDailyProfit'];
+      const numKeys = ['entryValue', 'minSignalScore', 'expirationSeconds', 'candleTimeframeSeconds', 'martingaleLevels', 'martingaleMultiplier', 'cooldownSeconds', 'maxDailyTrades', 'maxDailyLoss', 'maxDailyProfit', 'sessionStartHour', 'sessionEndHour'];
       const boolKeys = ['aiEnabled'];
       const strKeys = ['asset', 'aiModel', 'aiEndpoint', 'aiApiKey'];
       for (const k of numKeys) {
@@ -294,12 +434,18 @@ export class BinomoBot {
 
     // Carrega analytics para a IA
     await this.refreshAnalytics();
+    // Primeira otimizacao de estrategia
+    if (this.ai.stats().enabled) {
+      await this.runStrategyOptimization();
+    }
 
       let warmupMsg = false;
     let lastProgressLog = 0;
     let warmupStart = Date.now();
     let sessionLoggedThisCycle = false;
     let lastSignalLog = 0;
+    let lastStrategyCycle = 0;
+    let lastPostTradeCycle = 0;
     while (this.running) {
       await sleep(config.pollIntervalMs);
 
@@ -315,6 +461,20 @@ export class BinomoBot {
       if (sessionLoggedThisCycle) {
         log.info('Sessão reaberta (%s). Retomando.', session.session);
         sessionLoggedThisCycle = false;
+      }
+
+      // Ciclos periodicos da IA autonomia
+      if (Date.now() - this.lastAnalyticsTime > this.analyticsIntervalMs) {
+        this.lastAnalyticsTime = Date.now();
+        await this.refreshAnalytics();
+      }
+      if (this.ai.stats().enabled && this.strategyManager.shouldOptimize() && Date.now() - lastStrategyCycle > 120000) {
+        lastStrategyCycle = Date.now();
+        await this.runStrategyOptimization();
+      }
+      if (this.ai.stats().enabled && this.pendingPostTrade.length >= 3 && Date.now() - lastPostTradeCycle > 300000) {
+        lastPostTradeCycle = Date.now();
+        await this.runPostTradeAnalysis();
       }
 
       const candleCount = this.feed.getCandles().length;
@@ -411,6 +571,16 @@ export class BinomoBot {
 
       const entryPrice = this.feed.lastPrice;
       log.info('Preço de entrada: %s', entryPrice !== null ? entryPrice.toFixed(8) : 'n/a');
+
+      // Salva contexto do trade para analise pos-trade
+      this.lastTradeContext = {
+        patterns: signal.patterns,
+        marketState,
+        score: signal.score,
+        direction: signal.direction,
+        entryValue: tradeDecision.entryValue,
+      };
+
       const result = await this.trader!.execute(signal, tradeDecision.entryValue);
 
       // Envia trade para o frontend e captura o id gerado pelo banco
@@ -486,6 +656,33 @@ export class BinomoBot {
     const s = this.risk.stats();
     log.info('Banca: trades=%d perda=%s perdasConsec=%d', s.tradesToday, s.lossToday.toFixed(2), s.consecutiveLosses);
 
+    // Registra no strategy manager (aprendizado autonomo)
+    const isWin = result.status === 'WIN';
+    const ctx = this.lastTradeContext;
+    this.strategyManager.recordTrade(
+      direction,
+      isWin,
+      result.status === 'LOSS' ? (this.risk.stats().consecutiveLosses) : 0,
+      result.entryValue,
+      ctx?.marketState ?? 'unknown',
+      new Date().getUTCHours(),
+      ctx?.score ?? 0,
+      ctx?.patterns ?? []
+    );
+    // Enfileira para analise pos-trade em lote
+    if (ctx) {
+      this.pendingPostTrade.push({
+        direction,
+        win: isWin,
+        martingaleLevel: result.status === 'LOSS' ? (this.risk.stats().consecutiveLosses) : 0,
+        entryValue: result.entryValue,
+        marketState: ctx.marketState,
+        hour: new Date().getUTCHours(),
+        score: ctx.score,
+        patterns: ctx.patterns,
+      });
+    }
+
     // Envia resultado para o frontend
     this.api.sendResult({
       id: tradeId ?? 0,
@@ -494,6 +691,11 @@ export class BinomoBot {
       payout: result.payout ?? null,
       exitPrice,
     });
+
+    // Log periodico de performance da estrategia atual
+    if (this.strategyManager.getTradeCount() % 10 === 0 && this.strategyManager.getTradeCount() > 0) {
+      log.info('[IA ESTRATEGIA v%d] %s', this.strategyManager.getVersion(), this.strategyManager.formatPerfForPrompt());
+    }
   }
 
   async stop(): Promise<void> {

@@ -180,6 +180,15 @@ function updateState(s) {
   ai.textContent = s.aiEnabled ? 'Ativa' : 'Off';
   ai.style.color = s.aiEnabled ? 'var(--purple)' : 'var(--muted)';
   document.getElementById('statAiModel').textContent = s.aiModel || '—';
+  // Estrategia da IA
+  var stratEl = document.getElementById('statStrategy');
+  if (s.strategyVersion > 0) {
+    stratEl.textContent = 'v' + s.strategyVersion + (s.strategyReasoning ? ': ' + s.strategyReasoning.slice(0, 60) : '');
+    stratEl.title = s.strategyReasoning || '';
+    stratEl.style.color = 'var(--orange)';
+  } else {
+    stratEl.textContent = '';
+  }
   if (s.balance) document.getElementById('balanceValue').textContent = 'R$ ' + s.balance.toFixed(2);
   // Preencher config
   if (s.asset) document.getElementById('cfgAsset').value = s.asset;
