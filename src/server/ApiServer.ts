@@ -185,8 +185,13 @@ export class ApiServer {
     });
 
     this.app.post('/api/auth/login', (req, res) => {
+      if (!config.adminPassword) {
+        log.error('ADMIN_PASSWORD nao configurada no .env - login recusado.');
+        res.status(500).json({ ok: false, message: 'Servidor sem senha de administrador configurada (ADMIN_PASSWORD)' });
+        return;
+      }
       const { user, password } = req.body || {};
-      if (user === 'admin' && password === '01Deus02@@@@') {
+      if (user === 'admin' && password === config.adminPassword) {
         const token = crypto.randomBytes(32).toString('hex');
         this.authTokens.add(token);
         res.json({ ok: true, token });
@@ -333,8 +338,10 @@ export class ApiServer {
         });
         this.setupProcess = null;
       }
-      // Limpa lock files residuais do Chromium
-      try { execSync('rm -f /data/.binomo-profile/SingletonLock /data/.binomo-profile/SingletonSocket /data/.binomo-profile/SingletonCookie 2>/dev/null', { timeout: 2000 }); } catch {}
+      // Limpa lock files residuais do Chromium (apenas Linux/containers)
+      if (process.platform !== 'win32') {
+        try { execSync('rm -f /data/.binomo-profile/SingletonLock /data/.binomo-profile/SingletonSocket /data/.binomo-profile/SingletonCookie 2>/dev/null', { timeout: 2000 }); } catch {}
+      }
       const mode = (req.body?.mode as string) || 'trade';
       const indexJs = path.join(projectRoot, 'dist', 'index.js');
       const nodeExe = process.execPath;
@@ -401,12 +408,16 @@ export class ApiServer {
       if (this.botProcess) {
         log.info('Parando bot antes de iniciar setup-login');
         this.botProcess.kill('SIGINT');
-        try { execSync('pkill -9 -f "chrome.*binomo-profile" 2>/dev/null', { timeout: 3000 }); } catch {}
+        if (process.platform !== 'win32') {
+          try { execSync('pkill -9 -f "chrome.*binomo-profile" 2>/dev/null', { timeout: 3000 }); } catch {}
+        }
         this.botProcess = null;
         this.botRunning = false;
       }
-      // Limpa locks stale do perfil Chromium (caso restart do container)
-      try { execSync('rm -f /data/.binomo-profile/SingletonLock /data/.binomo-profile/SingletonSocket /data/.binomo-profile/SingletonCookie 2>/dev/null', { timeout: 2000 }); } catch {}
+      // Limpa locks stale do perfil Chromium (caso restart do container, apenas Linux)
+      if (process.platform !== 'win32') {
+        try { execSync('rm -f /data/.binomo-profile/SingletonLock /data/.binomo-profile/SingletonSocket /data/.binomo-profile/SingletonCookie 2>/dev/null', { timeout: 2000 }); } catch {}
+      }
       const distDir = path.resolve(projectRoot, 'dist');
       const setupScript = path.join(distDir, 'server', 'setup-login.js');
       // Usa o mesmo entry point com flag especial
@@ -507,7 +518,7 @@ export class ApiServer {
 
       // Persiste no banco se for trade ou candle e atualiza estado em memoria
       if (event.type === 'trade' && event.trade) {
-        const t = event.trade as { sessionId: string; direction: string; entryValue: number; expiration: number; score: number; asset: string; entryPrice: number | null; martingaleLevel: number; patterns: string[]; reasons: string[]; aiApproved: boolean; aiConfidence: number | null; aiReasoning: string | null; marketState?: string | null };
+        const t = event.trade as { sessionId: string; direction: string; entryValue: number; expiration: number; score: number; asset: string; entryPrice: number | null; martingaleLevel: number; patterns: string[]; reasons: string[]; aiApproved: boolean; aiConfidence: number | null; aiReasoning: string | null; marketState?: string | null; sentimentCall?: number | null; sentimentPut?: number | null; crowdAlignment?: string | null; bigBetsWithPct?: number | null; indicators?: { rsi: number; adx: number; atrNormalized: number; macdHist: number; stochK: number; bbPosition: number } | null };
         tradeId = this.db.insertTrade({
           sessionId: t.sessionId,
           direction: t.direction as Direction,
@@ -523,6 +534,16 @@ export class ApiServer {
           aiConfidence: t.aiConfidence,
           aiReasoning: t.aiReasoning,
           marketState: t.marketState,
+          sentimentCall: t.sentimentCall ?? null,
+          sentimentPut: t.sentimentPut ?? null,
+          crowdAlignment: t.crowdAlignment ?? null,
+          bigBetsWithPct: t.bigBetsWithPct ?? null,
+          indRsi: t.indicators?.rsi ?? null,
+          indAdx: t.indicators?.adx ?? null,
+          indAtrNormalized: t.indicators?.atrNormalized ?? null,
+          indMacdHist: t.indicators?.macdHist ?? null,
+          indStochK: t.indicators?.stochK ?? null,
+          indBbPosition: t.indicators?.bbPosition ?? null,
         });
         this.state.tradesToday++;
         const emittedTrade = {
@@ -551,7 +572,7 @@ export class ApiServer {
         this.emitEvent({ type: 'state', state: this.getState() });
       }
       if (event.type === 'result' && event.trade) {
-        const t = event.trade as { id: number; sessionId?: string; status: string; payout: number | null; exitPrice: number | null };
+        const t = event.trade as { id: number; sessionId?: string; status: string; payout: number | null; exitPrice: number | null; entryValue?: number; resultMargin?: number | null; priceT2?: number | null; lateReversal?: 0 | 1 | null; nearMiss?: 0 | 1 | null };
         let targetId = t.id;
         // Fallback: se o bot nao souber o id, pega o trade PENDING mais recente da sessao
         if ((!targetId || targetId <= 0) && t.sessionId) {
@@ -559,9 +580,14 @@ export class ApiServer {
           if (pending) targetId = pending.id;
         }
         if (targetId && targetId > 0) {
-          this.db.updateTradeResult(targetId, t.status, t.payout, t.exitPrice);
+          this.db.updateTradeResult(targetId, t.status, t.payout, t.exitPrice, {
+            resultMargin: t.resultMargin ?? null,
+            priceT2: t.priceT2 ?? null,
+            lateReversal: t.lateReversal ?? null,
+            nearMiss: t.nearMiss ?? null,
+          });
           if (t.status === 'LOSS') {
-            this.state.lossesToday += Math.abs(t.payout ?? 0) || 0;
+            this.state.lossesToday += t.entryValue ?? 0;
             this.state.consecutiveLosses++;
           } else if (t.status === 'WIN') {
             this.state.consecutiveLosses = 0;
@@ -635,6 +661,10 @@ export class ApiServer {
 
     // Lista janelas abertas no display (para debug)
     this.app.get('/api/vnc/windows', (_req, res) => {
+      if (process.platform === 'win32') {
+        res.json({ windows: [], message: 'xdotool nao suportado no Windows' });
+        return;
+      }
       try {
         const w = execSync('xdotool search . 2>/dev/null || true', { encoding: 'utf8' }).trim();
         if (!w) {
@@ -659,6 +689,10 @@ export class ApiServer {
 
     // Screenshot da tela X11 (via GraphicsMagick)
     this.app.get('/api/vnc/screenshot', (_req, res) => {
+      if (process.platform === 'win32') {
+        res.status(500).json({ error: 'Screenshot X11 nao suportado no Windows' });
+        return;
+      }
       const tmp = '/tmp/screen.png';
       try {
         execSync(`DISPLAY=:99 gm import -window root ${tmp} 2>/dev/null`, { timeout: 5000 });

@@ -28,6 +28,39 @@ export interface TradeRecord {
   market_state: string | null;
   placed_at: number;
   resolved_at: number | null;
+  sentiment_call: number | null;
+  sentiment_put: number | null;
+  crowd_alignment: string | null;
+  big_bets_with_pct: number | null;
+  ind_rsi: number | null;
+  ind_adx: number | null;
+  ind_atr_normalized: number | null;
+  ind_macd_hist: number | null;
+  ind_stoch_k: number | null;
+  ind_bb_position: number | null;
+  result_margin: number | null;
+  price_t2: number | null;
+  late_reversal: number | null;
+  near_miss: number | null;
+}
+
+/** Analytics de "padroes da banca" — multidao, quase-ganhos e viradas finais. */
+export interface HouseAnalytics {
+  crowdStats: { alignment: string; wins: number; losses: number; total: number; winRate: number }[];
+  nearMiss: { nearMissLosses: number; totalLossesTracked: number; rate: number };
+  lateReversals: { count: number; totalTracked: number; rate: number };
+  marginAsymmetry: { avgWinMargin: number | null; avgLossMargin: number | null };
+  crowdExtreme: {
+    againstUs: { wins: number; total: number; winRate: number };
+    withUs: { wins: number; total: number; winRate: number };
+  };
+}
+
+export interface ResultExtras {
+  resultMargin?: number | null;
+  priceT2?: number | null;
+  lateReversal?: 0 | 1 | null;
+  nearMiss?: 0 | 1 | null;
 }
 
 export interface SessionRecord {
@@ -255,6 +288,22 @@ export class AppDatabase {
     // Migracoes incrementais (colunas adicionadas posteriormente)
     this.addColumnIfMissing('trades', 'market_state', 'TEXT');
     this.addColumnIfMissing('trades', 'resolved_at', 'INTEGER');
+
+    // Padroes da banca: contexto de multidao + indicadores na entrada, anomalias no resultado
+    this.addColumnIfMissing('trades', 'sentiment_call', 'REAL');
+    this.addColumnIfMissing('trades', 'sentiment_put', 'REAL');
+    this.addColumnIfMissing('trades', 'crowd_alignment', 'TEXT');
+    this.addColumnIfMissing('trades', 'big_bets_with_pct', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_rsi', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_adx', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_atr_normalized', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_macd_hist', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_stoch_k', 'REAL');
+    this.addColumnIfMissing('trades', 'ind_bb_position', 'REAL');
+    this.addColumnIfMissing('trades', 'result_margin', 'REAL');
+    this.addColumnIfMissing('trades', 'price_t2', 'REAL');
+    this.addColumnIfMissing('trades', 'late_reversal', 'INTEGER');
+    this.addColumnIfMissing('trades', 'near_miss', 'INTEGER');
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -319,11 +368,23 @@ export class AppDatabase {
     aiConfidence: number | null;
     aiReasoning: string | null;
     marketState?: string | null;
+    sentimentCall?: number | null;
+    sentimentPut?: number | null;
+    crowdAlignment?: string | null;
+    bigBetsWithPct?: number | null;
+    indRsi?: number | null;
+    indAdx?: number | null;
+    indAtrNormalized?: number | null;
+    indMacdHist?: number | null;
+    indStochK?: number | null;
+    indBbPosition?: number | null;
   }): number {
     this.createSession(trade.sessionId);
     const result = this.db.prepare(
-      `INSERT INTO trades (session_id, direction, entry_value, expiration, score, status, asset, entry_price, martingale_level, patterns, reasons, ai_approved, ai_confidence, ai_reasoning, market_state, placed_at)
-       VALUES (@sessionId, @direction, @entryValue, @expiration, @score, 'PENDING', @asset, @entryPrice, @martingaleLevel, @patterns, @reasons, @aiApproved, @aiConfidence, @aiReasoning, @marketState, @placedAt)`
+      `INSERT INTO trades (session_id, direction, entry_value, expiration, score, status, asset, entry_price, martingale_level, patterns, reasons, ai_approved, ai_confidence, ai_reasoning, market_state, placed_at,
+                           sentiment_call, sentiment_put, crowd_alignment, big_bets_with_pct, ind_rsi, ind_adx, ind_atr_normalized, ind_macd_hist, ind_stoch_k, ind_bb_position)
+       VALUES (@sessionId, @direction, @entryValue, @expiration, @score, 'PENDING', @asset, @entryPrice, @martingaleLevel, @patterns, @reasons, @aiApproved, @aiConfidence, @aiReasoning, @marketState, @placedAt,
+               @sentimentCall, @sentimentPut, @crowdAlignment, @bigBetsWithPct, @indRsi, @indAdx, @indAtrNormalized, @indMacdHist, @indStochK, @indBbPosition)`
     ).run({
       sessionId: trade.sessionId,
       direction: trade.direction,
@@ -340,14 +401,31 @@ export class AppDatabase {
       aiReasoning: trade.aiReasoning,
       marketState: trade.marketState ?? null,
       placedAt: Date.now(),
+      sentimentCall: trade.sentimentCall ?? null,
+      sentimentPut: trade.sentimentPut ?? null,
+      crowdAlignment: trade.crowdAlignment ?? null,
+      bigBetsWithPct: trade.bigBetsWithPct ?? null,
+      indRsi: trade.indRsi ?? null,
+      indAdx: trade.indAdx ?? null,
+      indAtrNormalized: trade.indAtrNormalized ?? null,
+      indMacdHist: trade.indMacdHist ?? null,
+      indStochK: trade.indStochK ?? null,
+      indBbPosition: trade.indBbPosition ?? null,
     });
     return Number(result.lastInsertRowid);
   }
 
-  updateTradeResult(id: number, status: string, payout: number | null, exitPrice: number | null): void {
+  updateTradeResult(id: number, status: string, payout: number | null, exitPrice: number | null, extras?: ResultExtras): void {
     this.db.prepare(
-      'UPDATE trades SET status=?, payout=?, exit_price=?, resolved_at=? WHERE id=?'
-    ).run(status, payout, exitPrice, Date.now(), id);
+      'UPDATE trades SET status=?, payout=?, exit_price=?, result_margin=?, price_t2=?, late_reversal=?, near_miss=?, resolved_at=? WHERE id=?'
+    ).run(
+      status, payout, exitPrice,
+      extras?.resultMargin ?? null,
+      extras?.priceT2 ?? null,
+      extras?.lateReversal ?? null,
+      extras?.nearMiss ?? null,
+      Date.now(), id
+    );
   }
 
   getTrades(limit = 100, offset = 0): TradeRecord[] {
@@ -706,6 +784,7 @@ export class AppDatabase {
     hourlyGaleLevels: { hour: number; g1: number; g2: number; g3: number; g4: number; g5plus: number; totalGales: number; recovered: number; totalLoss: number }[];
     hourlyPerformance: { hour: number; wins: number; losses: number; total: number; winRate: number }[];
     marketStateStats: { state: string; wins: number; losses: number; total: number; winRate: number }[];
+    house: HouseAnalytics;
   } {
     const galeDist = this.db.prepare(
       `SELECT martingale_level as level, COUNT(*) as count FROM trades WHERE martingale_level > 0 GROUP BY martingale_level ORDER BY level`
@@ -778,6 +857,97 @@ export class AppDatabase {
       hourlyGaleLevels,
       hourlyPerformance,
       marketStateStats,
+      house: this.getHouseAnalytics(),
+    };
+  }
+
+  /**
+   * Analytics de "padroes da banca": performance vs multidao, perdas por
+   * margem minima (quase-ganhou), viradas no ultimo segundo e assimetria
+   * de margem entre WIN e LOSS. Todos os filtros exigem colunas nao-nulas,
+   * entao trades antigos (sem esses dados) nao afetam os numeros.
+   */
+  getHouseAnalytics(): HouseAnalytics {
+    const crowdRows = this.db.prepare(
+      `SELECT crowd_alignment as alignment,
+              SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins,
+              SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as losses,
+              COUNT(*) as total
+       FROM trades WHERE status IN ('WIN','LOSS') AND crowd_alignment IS NOT NULL
+       GROUP BY crowd_alignment ORDER BY total DESC`
+    ).all() as { alignment: string; wins: number; losses: number; total: number }[];
+
+    const crowdStats = crowdRows.map((r) => ({
+      ...r,
+      winRate: r.total > 0 ? Math.round((r.wins / r.total) * 100) : 0,
+    }));
+
+    const nm = this.db.prepare(
+      `SELECT SUM(CASE WHEN near_miss=1 THEN 1 ELSE 0 END) as nearMissLosses, COUNT(*) as totalLossesTracked
+       FROM trades WHERE status='LOSS' AND near_miss IS NOT NULL`
+    ).get() as { nearMissLosses: number | null; totalLossesTracked: number };
+    const nearMiss = {
+      nearMissLosses: nm.nearMissLosses ?? 0,
+      totalLossesTracked: nm.totalLossesTracked,
+      rate: nm.totalLossesTracked > 0 ? Math.round(((nm.nearMissLosses ?? 0) / nm.totalLossesTracked) * 100) : 0,
+    };
+
+    const lr = this.db.prepare(
+      `SELECT SUM(CASE WHEN late_reversal=1 THEN 1 ELSE 0 END) as count, COUNT(*) as totalTracked
+       FROM trades WHERE status IN ('WIN','LOSS') AND late_reversal IS NOT NULL`
+    ).get() as { count: number | null; totalTracked: number };
+    const lateReversals = {
+      count: lr.count ?? 0,
+      totalTracked: lr.totalTracked,
+      rate: lr.totalTracked > 0 ? Math.round(((lr.count ?? 0) / lr.totalTracked) * 100) : 0,
+    };
+
+    const margins = this.db.prepare(
+      `SELECT AVG(CASE WHEN status='WIN' THEN result_margin END) as avgWinMargin,
+              AVG(CASE WHEN status='LOSS' THEN result_margin END) as avgLossMargin
+       FROM trades WHERE result_margin IS NOT NULL AND status IN ('WIN','LOSS')`
+    ).get() as { avgWinMargin: number | null; avgLossMargin: number | null };
+
+    const extreme = this.db.prepare(
+      `SELECT
+         SUM(CASE WHEN againstUs=1 AND status='WIN' THEN 1 ELSE 0 END) as againstWins,
+         SUM(CASE WHEN againstUs=1 THEN 1 ELSE 0 END) as againstTotal,
+         SUM(CASE WHEN withUs=1 AND status='WIN' THEN 1 ELSE 0 END) as withWins,
+         SUM(CASE WHEN withUs=1 THEN 1 ELSE 0 END) as withTotal
+       FROM (
+         SELECT status,
+           CASE WHEN (direction='CALL' AND sentiment_put >= 0.75 * (sentiment_call + sentiment_put))
+                  OR (direction='PUT'  AND sentiment_call >= 0.75 * (sentiment_call + sentiment_put))
+                THEN 1 ELSE 0 END as againstUs,
+           CASE WHEN (direction='CALL' AND sentiment_call >= 0.75 * (sentiment_call + sentiment_put))
+                  OR (direction='PUT'  AND sentiment_put >= 0.75 * (sentiment_call + sentiment_put))
+                THEN 1 ELSE 0 END as withUs
+         FROM trades
+         WHERE status IN ('WIN','LOSS') AND sentiment_call IS NOT NULL AND sentiment_put IS NOT NULL
+           AND (sentiment_call + sentiment_put) > 0
+       )`
+    ).get() as { againstWins: number | null; againstTotal: number | null; withWins: number | null; withTotal: number | null };
+
+    const mkRate = (wins: number, total: number) => (total > 0 ? Math.round((wins / total) * 100) : 0);
+    const crowdExtreme = {
+      againstUs: {
+        wins: extreme.againstWins ?? 0,
+        total: extreme.againstTotal ?? 0,
+        winRate: mkRate(extreme.againstWins ?? 0, extreme.againstTotal ?? 0),
+      },
+      withUs: {
+        wins: extreme.withWins ?? 0,
+        total: extreme.withTotal ?? 0,
+        winRate: mkRate(extreme.withWins ?? 0, extreme.withTotal ?? 0),
+      },
+    };
+
+    return {
+      crowdStats,
+      nearMiss,
+      lateReversals,
+      marginAsymmetry: { avgWinMargin: margins.avgWinMargin, avgLossMargin: margins.avgLossMargin },
+      crowdExtreme,
     };
   }
 

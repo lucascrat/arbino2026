@@ -20,6 +20,12 @@ interface Tick {
   price: number;
 }
 
+interface BufferedTick {
+  time: number;      // sent_at do servidor (epoch ms)
+  localTime: number; // Date.now() na ingestao — usado nas buscas (relogio do bot)
+  price: number;
+}
+
 /**
  * Captura dados da Binomo interceptando WebSockets (protocolo Phoenix Channels).
  *
@@ -47,7 +53,12 @@ export class CandleFeed {
   private rawDumpStream: fs.WriteStream | null = null;
 
   public sentiment: { call: number; put: number; asset: string } | null = null;
+  /** Timestamp local da ultima atualizacao de sentimento (para descartar leituras velhas). */
+  public sentimentTs: number | null = null;
   public recentDeals: { direction: 'CALL' | 'PUT'; bet: number; ts: number }[] = [];
+  /** Historico de ticks (ring buffer) — permite reconstruir o preco em instantes passados. */
+  private tickHistory: BufferedTick[] = [];
+  private readonly maxTicks = 3000;
   public balance: { amount: number; currency: string; accountType: string } | null = null;
   /** Último preço recebido via tick. */
   public lastPrice: number | null = null;
@@ -115,6 +126,7 @@ export class CandleFeed {
       const p = obj.payload as { call?: number; put?: number; asset?: string };
       if (typeof p.call === 'number' && typeof p.put === 'number') {
         this.sentiment = { call: p.call, put: p.put, asset: p.asset ?? '' };
+        this.sentimentTs = Date.now();
         log.debug('Sentimento: CALL %d%% / PUT %d%%', p.call, p.put);
       }
     }
@@ -182,6 +194,8 @@ export class CandleFeed {
       return;
     }
     this.lastPrice = tick.price;
+    this.tickHistory.push({ time: tick.time, localTime: Date.now(), price: tick.price });
+    if (this.tickHistory.length > this.maxTicks) this.tickHistory.shift();
     const bucket = Math.floor(tick.time / this.tfMs) * this.tfMs;
 
     if (this.currentCandle && bucket === this.currentBucketStart) {
@@ -288,6 +302,27 @@ export class CandleFeed {
 
   getCandles(count = 200): Candle[] {
     return this.candles.slice(-count);
+  }
+
+  /**
+   * Retorna o preco do ultimo tick recebido ate o instante tsMs (relogio local),
+   * ou null se nao houver tick dentro da tolerancia.
+   */
+  getPriceAt(tsMs: number, toleranceMs = 3000): number | null {
+    for (let i = this.tickHistory.length - 1; i >= 0; i--) {
+      const t = this.tickHistory[i];
+      if (t.localTime <= tsMs) {
+        return tsMs - t.localTime <= toleranceMs ? t.price : null;
+      }
+    }
+    return null;
+  }
+
+  /** Ticks recebidos entre dois instantes (relogio local), em ordem cronologica. */
+  getTicksBetween(aMs: number, bMs: number): { time: number; price: number }[] {
+    return this.tickHistory
+      .filter((t) => t.localTime >= aMs && t.localTime <= bMs)
+      .map((t) => ({ time: t.time, price: t.price }));
   }
 
   has(minCount = 50): boolean {

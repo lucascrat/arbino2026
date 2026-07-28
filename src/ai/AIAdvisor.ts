@@ -115,7 +115,17 @@ export class AIAdvisor {
       return cached;
     }
 
-    this.lastSignalKey = this.buildExperienceKey(signal);
+    // Alinhamento com a multidao (>=60% define maioria) — entra na chave de aprendizado
+    let crowdAlignment: string | null = null;
+    if (context.sentiment) {
+      const totalSent = context.sentiment.call + context.sentiment.put;
+      if (totalSent > 0) {
+        const callPct = context.sentiment.call / totalSent;
+        const majority = callPct >= 0.6 ? 'CALL' : callPct <= 0.4 ? 'PUT' : null;
+        crowdAlignment = majority === null ? 'neutral' : majority === signal.direction ? 'with_crowd' : 'against_crowd';
+      }
+    }
+    this.lastSignalKey = this.buildExperienceKey(signal, crowdAlignment);
 
     const prompt = this.buildPrompt(signal, candles, context);
 
@@ -128,8 +138,8 @@ export class AIAdvisor {
       else this.blockCount++;
       return verdict;
     } catch (err) {
-      log.error('Falha na consulta a IA: %s - APROVANDO sinal (fail-open)', (err as Error).message);
-      return { approve: true, confidence: 50, reasoning: 'IA indisponivel - aprovado automaticamente', risk: 'medium' };
+      log.error('Falha na consulta a IA: %s - BLOQUEANDO sinal (fail-closed)', (err as Error).message);
+      return { approve: false, confidence: 0, reasoning: 'IA indisponivel - sinal bloqueado por seguranca (fail-closed)', risk: 'high' };
     }
   }
 
@@ -173,10 +183,14 @@ export class AIAdvisor {
     if (this.dirty) this.saveExperience();
   }
 
-  private buildExperienceKey(signal: Signal): string {
+  private buildExperienceKey(signal: Signal, crowdAlignment?: string | null): string {
     const scoreBucket = signal.score >= 90 ? '90-100' : signal.score >= 80 ? '80-89' : '70-79';
     const topPatterns = signal.patterns.slice(0, 3).map((p) => p.replace(/\s+/g, ''));
-    return `${signal.direction}-${scoreBucket}-${topPatterns.join('_')}`;
+    const crowdSuffix = crowdAlignment === 'with_crowd' ? '-wc'
+      : crowdAlignment === 'against_crowd' ? '-ac'
+      : crowdAlignment === 'neutral' ? '-nt'
+      : '-na';
+    return `${signal.direction}-${scoreBucket}-${topPatterns.join('_')}${crowdSuffix}`;
   }
 
   private buildLearningSection(): string {
@@ -566,7 +580,7 @@ Responda APENAS em JSON valido.`,
 8. **Horarios com win rate > 60%**: Foque nesses horarios
 9. **Mercados 'trending'**: Use expiracao mais longa (60s+) para capturar tendencia
 10. **Mercados 'ranging'**: Use expiracao mais curta (15-30s) para scalping
-11. **entryValue SEMPRE = 5**: O usuario definiu entrada minima de R$5,00. Nao altere.
+11. **entryValue NAO e um parametro seu**: a entrada base e definida pelo usuario (R$${config.entryValue.toFixed(2)} atualmente). Nao inclua entryValue nas mudancas sugeridas.
 12. **Nao mude parametros a cada ciclo**: Deixe o novo setup rodar por alguns trades antes de avaliar
 13. **Respeite limites**: Nunca sugira valores fora dos ranges especificados
 
@@ -603,6 +617,7 @@ Se a estrategia atual ja esta boa, retorne changes vazio: {}`;
 2. Procure correlacoes: Perdeu em CALL as 21h? Perdeu em ranging_PUT_calm?
 3. Sugira acoes especificas e mensuraveis
 4. Seja honesto sobre incerteza: se os dados sao insuficientes, diga
+5. PADROES DA BANCA: procure sinais de manipulacao da corretora — perdas por margem minima (marcadas QUASE-GANHOU), viradas no ultimo segundo (marcadas VIRADA-FINAL), e compare operar CONTRA a multidao (multidao=against_crowd) vs A FAVOR (with_crowd). A banca lucra quando a maioria perde: se contra a multidao rende mais, recomende vies contrarian. Se QUASE-GANHOU for frequente, recomende evitar entradas com volatilidade morta (movimento esperado pequeno demais)
 
 ## FORMATO DE RESPOSTA
 Responda APENAS JSON:
@@ -671,13 +686,22 @@ Com base nestes dados, quais parametros voce alteraria para maximizar o lucro?`;
     patterns: string[];
     marketState: string;
     hour: number;
+    crowdAlignment?: string | null;
+    nearMiss?: boolean;
+    lateReversal?: boolean;
+    resultMargin?: number | null;
   }[]): Promise<{ insights: string[]; avoidPatterns: string[]; preferPatterns: string[]; summary: string } | null> {
     if (!this.enabled || trades.length === 0) return null;
     this.postTradeCallCount++;
 
-    const tradeLines = trades.map((t, i) =>
-      `Trade ${i + 1}: ${t.direction} ${t.win ? 'WIN' : 'LOSS'} score=${t.score} gale=${t.martingaleLevel} padroes=[${t.patterns.slice(0, 3).join(',')}] estado=${t.marketState} hora=${t.hour}h`
-    ).join('\n');
+    const tradeLines = trades.map((t, i) => {
+      let line = `Trade ${i + 1}: ${t.direction} ${t.win ? 'WIN' : 'LOSS'} score=${t.score} gale=${t.martingaleLevel} padroes=[${t.patterns.slice(0, 3).join(',')}] estado=${t.marketState} hora=${t.hour}h`;
+      if (t.crowdAlignment) line += ` multidao=${t.crowdAlignment}`;
+      if (t.nearMiss) line += ' QUASE-GANHOU';
+      if (t.lateReversal) line += ' VIRADA-FINAL';
+      if (t.resultMargin != null) line += ` margem=${(t.resultMargin * 100).toFixed(5)}%`;
+      return line;
+    }).join('\n');
 
     const prompt = `Analise estes trades recentes e extraia aprendizados para melhorar o bot:\n\n${tradeLines}`;
     const messages: ChatMessage[] = [
@@ -710,7 +734,7 @@ Com base nestes dados, quais parametros voce alteraria para maximizar o lucro?`;
       martingaleLevels: 3,
       martingaleMultiplier: 2,
       cooldownSeconds: 15,
-      entryValue: 5,
+      entryValue: config.entryValue,
     };
   }
 

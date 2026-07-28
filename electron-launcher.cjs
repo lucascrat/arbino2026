@@ -85,7 +85,8 @@ async function startApiServer() {
 async function startBotAuto() {
   const nodeExe = await findSystemNode();
   const indexJs = path.join(__dirname, 'dist', 'index.js');
-  botProcess = spawn(nodeExe, [indexJs, '--mode=trade'], {
+  const mode = process.env.MODE === 'setup-login' ? 'setup-login' : (process.env.MODE || 'trade');
+  botProcess = spawn(nodeExe, [indexJs, `--mode=${mode}`], {
     cwd: __dirname,
     stdio: 'pipe',
     env: { ...process.env },
@@ -109,7 +110,7 @@ async function startBotAuto() {
     if (win) win.webContents.send('bot:stopped');
   });
 
-  console.log('[BOT] Auto-start: Bot iniciado em modo trade');
+  console.log(`[BOT] Auto-start: Bot iniciado em modo ${mode}`);
 
   // Notifica o ApiServer para atualizar o estado
   notifyApiBotRunning();

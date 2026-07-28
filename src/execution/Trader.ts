@@ -225,39 +225,6 @@ export class Trader {
     log.error('Nenhum boto %s viavel encontrado na pagina.', direction);
     return false;
   }
-
-  /**
-   * Lê o resultado do último trade a partir do histórico da Binomo.
-   * A plataforma mostra deals fechados numa lista com lucro/prejuízo.
-   * Procura pelo último item com texto de resultado.
-   */
-  async readLastResult(): Promise<'WIN' | 'LOSS' | 'PENDING' | 'UNKNOWN'> {
-    // Strategy 1: toast/notificação (imediato)
-    const toast = await this.page
-      .locator('[class*="toast" i], [class*="notification" i], [class*="snackbar" i]')
-      .first()
-      .textContent({ timeout: 2000 })
-      .catch(() => null);
-    if (toast) {
-      const t = toast.toLowerCase();
-      if (/(lucro|ganho|win|profit|sucesso|\+)/i.test(t)) return 'WIN';
-      if (/(loss|perd|preju|perda|-)/i.test(t)) return 'LOSS';
-    }
-
-    // Strategy 2: histórico de deals (mais confiável, mas pode demorar a aparecer)
-    const dealItem = await this.page
-      .locator('[class*="deal" i][class*="item" i], [class*="history" i] [class*="item" i], [class*="trade-result" i]')
-      .first()
-      .textContent({ timeout: 3000 })
-      .catch(() => null);
-    if (dealItem) {
-      const d = dealItem.toLowerCase();
-      if (/(lucro|ganho|win|profit|\+\$|\+\d)/i.test(d)) return 'WIN';
-      if (/(loss|perd|preju|perda|-\$|-\d)/i.test(d)) return 'LOSS';
-    }
-
-    return 'UNKNOWN';
-  }
 }
 
 /**

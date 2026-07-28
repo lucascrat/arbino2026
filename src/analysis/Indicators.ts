@@ -31,7 +31,7 @@ export function emaSeries(candles: Candle[], period: number): number[] {
   let e = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
   for (let i = 0; i < closes.length; i++) {
     if (i < period - 1) {
-      out.push(0);
+      out.push(NaN);
     } else if (i === period - 1) {
       out.push(e);
     } else {
@@ -332,15 +332,29 @@ export function adx(candles: Candle[], period = 14): {
     trs.push(tr);
   }
 
-  // Wilder's smoothing
+  // Wilder's smoothing: um unico passo, calculando um DX a cada candle
+  // (sem re-semear a suavizacao a partir do valor final ja suavizado).
   let atrVal = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
   let plusDM = plusDMs.slice(0, period).reduce((a, b) => a + b, 0) / period;
   let minusDM = minusDMs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+  const dxs: number[] = [];
+  const pushDx = (): void => {
+    if (atrVal > 0) {
+      const pDI = (plusDM / atrVal) * 100;
+      const mDI = (minusDM / atrVal) * 100;
+      dxs.push(Math.abs(pDI - mDI) / ((pDI + mDI) || 1) * 100);
+    } else {
+      dxs.push(0);
+    }
+  };
+  pushDx(); // DX no fim do periodo inicial (indice period-1)
 
   for (let i = period; i < trs.length; i++) {
     atrVal = (atrVal * (period - 1) + trs[i]) / period;
     plusDM = (plusDM * (period - 1) + plusDMs[i]) / period;
     minusDM = (minusDM * (period - 1) + minusDMs[i]) / period;
+    pushDx();
   }
 
   if (atrVal === 0) {
@@ -349,31 +363,16 @@ export function adx(candles: Candle[], period = 14): {
 
   const plusDI = (plusDM / atrVal) * 100;
   const minusDI = (minusDM / atrVal) * 100;
-  const dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI || 1) * 100;
 
-  // ADX = Wilder's smoothed DX
-  let adxVal = dx;
-  if (trs.length > period * 2) {
-    const dxs: number[] = [];
-    let a = atrVal;
-    let pDM = plusDM;
-    let mDM = minusDM;
-    for (let i = period; i < trs.length; i++) {
-      a = (a * (period - 1) + trs[i]) / period;
-      pDM = (pDM * (period - 1) + plusDMs[i]) / period;
-      mDM = (mDM * (period - 1) + minusDMs[i]) / period;
-      if (a > 0) {
-        const pDI = (pDM / a) * 100;
-        const mDI = (mDM / a) * 100;
-        dxs.push(Math.abs(pDI - mDI) / (pDI + mDI || 1) * 100);
-      }
+  // ADX = Wilder's smoothed DX (media dos primeiros `period` DX, depois suavizacao continua)
+  let adxVal = dxs[0] ?? 0;
+  if (dxs.length >= period) {
+    adxVal = dxs.slice(0, period).reduce((x, y) => x + y, 0) / period;
+    for (let i = period; i < dxs.length; i++) {
+      adxVal = (adxVal * (period - 1) + dxs[i]) / period;
     }
-    if (dxs.length >= period) {
-      adxVal = dxs.slice(0, period).reduce((x, y) => x + y, 0) / period;
-      for (let i = period; i < dxs.length; i++) {
-        adxVal = (adxVal * (period - 1) + dxs[i]) / period;
-      }
-    }
+  } else if (dxs.length > 0) {
+    adxVal = dxs.reduce((x, y) => x + y, 0) / dxs.length;
   }
 
   let trendStrength: 'weak' | 'transition' | 'strong';
@@ -419,7 +418,7 @@ export function macd(candles: Candle[], fast = 12, slow = 26, signalPeriod = 9):
   const macdLine: number[] = [];
   for (let i = 0; i < closes.length; i++) {
     if (i < slow - 1) {
-      macdLine.push(0);
+      macdLine.push(NaN);
     } else {
       macdLine.push(emaFast[i] - emaSlow[i]);
     }

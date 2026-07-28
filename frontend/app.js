@@ -56,12 +56,6 @@ document.getElementById('loginPass').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') doLogin();
 });
 
-// Auto-login if token exists
-if (authToken) {
-  document.getElementById('loginOverlay').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-}
-
 // ===== APP INIT =====
 var botRunning = false;
 var socket;
@@ -112,7 +106,17 @@ function initApp() {
   setInterval(fetchSystemStatus, 15000);
 }
 
-if (authToken) initApp();
+// Auto-login: so mostra o dashboard depois de confirmar com o servidor que o token ainda e valido.
+if (authToken) {
+  fetch('/api/bot/status', { headers: { 'Authorization': 'Bearer ' + authToken } })
+    .then((res) => {
+      if (!res.ok) throw new Error('token invalido');
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      initApp();
+    })
+    .catch(() => doLogout());
+}
 
 // ===== BOT CONTROLS =====
 async function startBot() {
@@ -445,6 +449,27 @@ async function fetchAnalytics() {
       }).join('<br>');
     } else {
       marketEl.textContent = 'Sem dados de mercado';
+    }
+    // Padroes da banca
+    var houseEl = document.getElementById('analyticsHouse');
+    if (houseEl) {
+      var h = a.house;
+      var houseLines = [];
+      if (h && h.crowdStats && h.crowdStats.length) {
+        var labels = { with_crowd: 'A favor da multidao', against_crowd: 'Contra a multidao', neutral: 'Multidao neutra' };
+        h.crowdStats.forEach(function(c) {
+          var cls = c.winRate >= 50 ? 'color:var(--green)' : 'color:var(--red)';
+          houseLines.push('<span style="' + cls + '">' + (labels[c.alignment] || c.alignment) + ': ' + c.winRate + '% (' + c.wins + 'W/' + c.losses + 'L)</span>');
+        });
+      }
+      if (h && h.nearMiss && h.nearMiss.totalLossesTracked > 0) {
+        var nmCls = h.nearMiss.rate > 40 ? 'color:var(--red);font-weight:700' : '';
+        houseLines.push('<span style="' + nmCls + '">Quase-ganhou: ' + h.nearMiss.rate + '% das perdas (' + h.nearMiss.nearMissLosses + '/' + h.nearMiss.totalLossesTracked + ')</span>');
+      }
+      if (h && h.lateReversals && h.lateReversals.totalTracked > 0) {
+        houseLines.push('Virada final: ' + h.lateReversals.rate + '% (' + h.lateReversals.count + '/' + h.lateReversals.totalTracked + ')');
+      }
+      houseEl.innerHTML = houseLines.length ? houseLines.join('<br>') : 'Sem dados da banca';
     }
     // Summary de gales total
     var statsEl = document.getElementById('analyticsStats');

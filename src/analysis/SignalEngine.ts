@@ -13,6 +13,19 @@ export interface MarketSentiment {
   recentDeals?: { direction: Direction; bet: number }[];
 }
 
+/**
+ * Estatisticas historicas de trades vs a multidao (vindas do banco).
+ * Alimentam o modo contrarian adaptativo: se operar contra a maioria
+ * historicamente rende mais, os pesos contrarian sobem e o bonus
+ * de seguir a multidao e removido.
+ */
+export interface CrowdStats {
+  withCrowdWinRate: number;     // 0-100
+  againstCrowdWinRate: number;  // 0-100
+  withCrowdSamples: number;
+  againstCrowdSamples: number;
+}
+
 export interface SignalContext {
   rsi: number;
   atr: number;
@@ -49,9 +62,23 @@ export interface SignalContext {
  */
 export class SignalEngine {
   private readonly minAlignedSources: number;
+  private crowdStats: CrowdStats | null = null;
+  private crowdMinSamples = 30;
+  private crowdEdgePts = 10;
 
   constructor(private readonly minScore: number, minAlignedSources = 2) {
     this.minAlignedSources = minAlignedSources;
+  }
+
+  /**
+   * Define as estatisticas de multidao usadas pelo contrarian adaptativo.
+   * Limiar de amostras e edge sao passados aqui (e nao lidos do config)
+   * para manter o engine puro em backtests.
+   */
+  setCrowdStats(stats: CrowdStats | null, thresholds?: { minSamples?: number; edgePts?: number }): void {
+    this.crowdStats = stats;
+    if (thresholds?.minSamples != null) this.crowdMinSamples = thresholds.minSamples;
+    if (thresholds?.edgePts != null) this.crowdEdgePts = thresholds.edgePts;
   }
 
   evaluate(candles: Candle[], sentiment?: MarketSentiment | null): Signal | null {
@@ -234,16 +261,38 @@ export class SignalEngine {
       const putPct = sentiment.put / total;
       reasons.push(`sentimento CALL ${Math.round(callPct * 100)}% / PUT ${Math.round(putPct * 100)}%`);
 
+      // Pesos adaptativos: se historicamente operar CONTRA a multidao rende mais
+      // (a banca ganha quando a maioria perde), sobe o contrarian e remove o
+      // bonus de seguir a multidao. Padroes = comportamento original.
+      let contrarianAdd = 0.15;
+      let followAdd = 0.08;
+      let betsContrarianAdd = 0.1;
+      const cs = this.crowdStats;
+      if (cs
+        && cs.withCrowdSamples + cs.againstCrowdSamples >= this.crowdMinSamples
+        && Math.min(cs.withCrowdSamples, cs.againstCrowdSamples) >= 10) {
+        const edge = cs.againstCrowdWinRate - cs.withCrowdWinRate;
+        if (edge >= this.crowdEdgePts) {
+          contrarianAdd = 0.25;
+          followAdd = 0;
+          betsContrarianAdd = 0.15;
+          reasons.push(`modo contrarian adaptativo (banca): contra multidao rende +${edge.toFixed(0)}pts`);
+        } else if (edge <= -this.crowdEdgePts) {
+          contrarianAdd = 0.10;
+          reasons.push(`modo pro-multidao adaptativo: a favor rende +${(-edge).toFixed(0)}pts`);
+        }
+      }
+
       if (callPct >= 0.8) {
-        putScore += 0.15;
+        putScore += contrarianAdd;
         reasons.push('multidao >80% CALL - vies contrarian PUT');
       } else if (putPct >= 0.8) {
-        callScore += 0.15;
+        callScore += contrarianAdd;
         reasons.push('multidao >80% PUT - vies contrarian CALL');
       } else if (callPct >= 0.6 && dominant === 'CALL') {
-        callScore += 0.08;
+        callScore += followAdd;
       } else if (putPct >= 0.6 && dominant === 'PUT') {
-        putScore += 0.08;
+        putScore += followAdd;
       }
 
       // Usa recentDeals: grandes apostas concentradas aumentam vies contrarian
@@ -254,10 +303,10 @@ export class SignalEngine {
         const totalBets = callBets + putBets || 1;
         const callBetPct = callBets / totalBets;
         if (callBetPct >= 0.75) {
-          putScore += 0.1;
+          putScore += betsContrarianAdd;
           reasons.push(`apostas grandes ${Math.round(callBetPct * 100)}% CALL - contrarian PUT`);
         } else if (callBetPct <= 0.25) {
-          callScore += 0.1;
+          callScore += betsContrarianAdd;
           reasons.push(`apostas grandes ${Math.round((1 - callBetPct) * 100)}% PUT - contrarian CALL`);
         }
       }

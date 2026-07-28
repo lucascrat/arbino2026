@@ -44,7 +44,7 @@ export class Backtester {
   constructor(
     private readonly engine: SignalEngine,
     private readonly expirationSeconds: number,
-    private readonly payoutRate = 0.83
+    private readonly payoutRate = config.payoutPercent
   ) {}
 
   /** Lê candles de CSV (formato: time,open,high,low,close). */

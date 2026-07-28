@@ -24,10 +24,16 @@ export const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(config.logsDir, 'bot.log'),
       level: 'debug',
+      maxsize: 20 * 1024 * 1024, // 20MB por arquivo
+      maxFiles: 5,
+      tailable: true,
     }),
     new winston.transports.File({
       filename: path.join(config.logsDir, 'error.log'),
       level: 'error',
+      maxsize: 20 * 1024 * 1024,
+      maxFiles: 5,
+      tailable: true,
     }),
   ],
 });

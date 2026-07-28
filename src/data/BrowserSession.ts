@@ -1,7 +1,6 @@
 import { chromium, type BrowserContext, type Page, type WebSocket } from 'playwright';
 import { config } from '../config.js';
 import { service } from '../logger.js';
-import type { Candle } from '../types.js';
 import { CandleFeed } from './CandleFeed.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +14,7 @@ export class BrowserSession {
   private ctx!: BrowserContext;
   private page!: Page;
   private feed: CandleFeed;
-  public readonly ready = false;
+  public ready = false;
 
   constructor(feed: CandleFeed) {
     this.feed = feed;
@@ -87,7 +86,7 @@ export class BrowserSession {
     }
 
     log.info('URL final: %s | titulo: %s', this.page.url(), await this.page.title());
-    (this as { ready: boolean }).ready = true;
+    this.ready = true;
     log.info('Sessão pronta.');
   }
 
@@ -99,7 +98,7 @@ export class BrowserSession {
         const url = this.page.url();
         if (url.includes('/trading')) {
           log.info('Login manual detectado! URL: %s', url);
-          (this as { ready: boolean }).ready = true;
+          this.ready = true;
           return true;
         }
       } catch {
@@ -336,23 +335,6 @@ export class BrowserSession {
         };
       })
       .catch((err) => ({ error: (err as Error).message }));
-  }
-
-  async getLastCandlesFromDom(): Promise<Candle[]> {
-    return this.page
-      .evaluate(() => {
-        // Placeholder heurístico — adaptar conforme DOM real observado no discovery.
-        const els = Array.from(document.querySelectorAll('[class*="candle"], [class*="bar"]'));
-        return els.slice(-60).map((el, i) => ({
-          time: Date.now() - (60 - i) * 1000,
-          open: 0,
-          high: 0,
-          low: 0,
-          close: 0,
-          _text: (el.textContent ?? '').slice(0, 50),
-        }));
-      })
-      .catch(() => []);
   }
 
   getPage(): Page {

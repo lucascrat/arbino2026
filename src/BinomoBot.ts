@@ -1,9 +1,10 @@
-import { config } from './config.js';
+import { config, updateConfig, type AppConfig } from './config.js';
 import { service } from './logger.js';
 import type { RunMode, Signal, TradeResult } from './types.js';
 import { CandleFeed } from './data/CandleFeed.js';
 import { BrowserSession } from './data/BrowserSession.js';
-import { SignalEngine, type MarketSentiment } from './analysis/SignalEngine.js';
+import { SignalEngine, type MarketSentiment, type CrowdStats } from './analysis/SignalEngine.js';
+import type { HouseAnalytics } from './db/Database.js';
 import { SessionFilter } from './analysis/SessionFilter.js';
 import { Trader } from './execution/Trader.js';
 import { RiskManager } from './risk/RiskManager.js';
@@ -41,6 +42,10 @@ export class BinomoBot {
     hour: number;
     score: number;
     patterns: string[];
+    crowdAlignment?: string | null;
+    nearMiss?: boolean;
+    lateReversal?: boolean;
+    resultMargin?: number | null;
   }[] = [];
   private lastPostTradeAnalysis = 0;
   private lastLoggedStrategyVersion = -1;
@@ -51,7 +56,13 @@ export class BinomoBot {
     score: number;
     direction: 'CALL' | 'PUT';
     entryValue: number;
+    atr: number;
+    atrNormalized: number;
+    crowdAlignment: string | null;
   } | null = null;
+  // Padroes da banca: estatisticas de multidao em cache (alimentam o contrarian adaptativo)
+  private lastCrowdStats: CrowdStats | null = null;
+  private lastHouseNearMissRate = 0;
 
   private sendDiag(): void {
     const rawLog = this.feed.getRawLog();
@@ -77,34 +88,36 @@ export class BinomoBot {
   /** Aplica parametros da estrategia da IA no config e subsystems */
   private applyStrategyParams(params?: BotParams): void {
     const p = params ?? this.strategyManager.getParams();
-    const cfg = config as Record<string, unknown>;
     if (p.expirationSeconds !== config.expirationSeconds) {
-      cfg['expirationSeconds'] = p.expirationSeconds;
+      updateConfig({ expirationSeconds: p.expirationSeconds });
       log.info('IA alterou expiracao para %ds', p.expirationSeconds);
     }
     if (p.minSignalScore !== config.minSignalScore) {
-      cfg['minSignalScore'] = p.minSignalScore;
+      updateConfig({ minSignalScore: p.minSignalScore });
       this.engine = new SignalEngine(p.minSignalScore);
+      // Reaplica as estatisticas de multidao — engine novo perderia o modo adaptativo
+      this.engine.setCrowdStats(this.lastCrowdStats, {
+        minSamples: config.crowdContrarianMinSamples,
+        edgePts: config.crowdContrarianEdgePts,
+      });
       log.info('IA alterou score minimo para %d', p.minSignalScore);
     }
     if (p.martingaleLevels !== config.martingaleLevels || p.martingaleMultiplier !== config.martingaleMultiplier) {
-      cfg['martingaleLevels'] = p.martingaleLevels;
-      cfg['martingaleMultiplier'] = p.martingaleMultiplier;
+      updateConfig({ martingaleLevels: p.martingaleLevels, martingaleMultiplier: p.martingaleMultiplier });
       this.risk = new RiskManager();
       log.info('IA alterou gales: %d niveis x%s', p.martingaleLevels, p.martingaleMultiplier);
     }
     if (p.cooldownSeconds !== config.cooldownSeconds) {
-      cfg['cooldownSeconds'] = p.cooldownSeconds;
+      updateConfig({ cooldownSeconds: p.cooldownSeconds });
       this.risk = new RiskManager();
       log.info('IA alterou cooldown para %ds', p.cooldownSeconds);
     }
     if (p.sessionStartHour !== config.sessionStartHour || p.sessionEndHour !== config.sessionEndHour) {
-      cfg['sessionStartHour'] = p.sessionStartHour;
-      cfg['sessionEndHour'] = p.sessionEndHour;
+      updateConfig({ sessionStartHour: p.sessionStartHour, sessionEndHour: p.sessionEndHour });
       this.sessionFilter = new SessionFilter();
       log.info('IA alterou sessao para %dh-%dh', p.sessionStartHour, p.sessionEndHour);
     }
-    cfg['entryValue'] = p.entryValue;
+    updateConfig({ entryValue: p.entryValue });
   }
 
   /** Executa ciclo de otimizacao de estrategia via IA */
@@ -270,6 +283,7 @@ export class BinomoBot {
         hourlyGaleLevels: { hour: number; g1: number; g2: number; g3: number; g4: number; g5plus: number; totalGales: number; recovered: number; totalLoss: number }[];
         hourlyPerformance: { hour: number; wins: number; losses: number; total: number; winRate: number }[];
         marketStateStats: { state: string; wins: number; losses: number; total: number; winRate: number }[];
+        house?: HouseAnalytics;
       };
 
       const parts: string[] = [];
@@ -318,6 +332,49 @@ export class BinomoBot {
       if (data.marketStateStats.length > 0) {
         const top = data.marketStateStats.slice(0, 5);
         parts.push(`MERCADOS: ${top.map((m) => `${m.state}=${m.winRate}%(${m.total}t)`).join(', ')}`);
+      }
+
+      // === PADROES DA BANCA (multidao, quase-ganhos, viradas finais) ===
+      if (data.house) {
+        const h = data.house;
+        const withRow = h.crowdStats.find((c) => c.alignment === 'with_crowd');
+        const againstRow = h.crowdStats.find((c) => c.alignment === 'against_crowd');
+        const houseParts: string[] = [];
+        if (withRow || againstRow) {
+          houseParts.push(`contra multidao=${againstRow ? `${againstRow.winRate}%(${againstRow.total}t)` : 'n/a'} | a favor=${withRow ? `${withRow.winRate}%(${withRow.total}t)` : 'n/a'}`);
+        }
+        if (h.nearMiss.totalLossesTracked > 0) {
+          houseParts.push(`quase-ganhou=${h.nearMiss.rate}% das perdas (${h.nearMiss.nearMissLosses}/${h.nearMiss.totalLossesTracked})`);
+        }
+        if (h.lateReversals.totalTracked > 0) {
+          houseParts.push(`virada final=${h.lateReversals.rate}% (${h.lateReversals.count}/${h.lateReversals.totalTracked})`);
+        }
+        if (h.marginAsymmetry.avgWinMargin != null && h.marginAsymmetry.avgLossMargin != null) {
+          houseParts.push(`margem media W/L=${(h.marginAsymmetry.avgWinMargin * 100).toFixed(5)}%/${(h.marginAsymmetry.avgLossMargin * 100).toFixed(5)}%`);
+        }
+        if (houseParts.length > 0) {
+          parts.push(`PADROES DA BANCA: ${houseParts.join(' | ')}`);
+        }
+        if (h.nearMiss.totalLossesTracked >= 10 && h.nearMiss.rate > 40) {
+          parts.push('ALERTA BANCA: mais de 40% das perdas foram por margem minima - evite entradas com volatilidade morta (movimento esperado pequeno)');
+        }
+        this.lastHouseNearMissRate = h.nearMiss.totalLossesTracked >= 10 ? h.nearMiss.rate : 0;
+
+        // Alimenta o contrarian adaptativo do SignalEngine
+        if (withRow && againstRow) {
+          this.lastCrowdStats = {
+            withCrowdWinRate: withRow.winRate,
+            againstCrowdWinRate: againstRow.winRate,
+            withCrowdSamples: withRow.total,
+            againstCrowdSamples: againstRow.total,
+          };
+        } else {
+          this.lastCrowdStats = null;
+        }
+        this.engine.setCrowdStats(this.lastCrowdStats, {
+          minSamples: config.crowdContrarianMinSamples,
+          edgePts: config.crowdContrarianEdgePts,
+        });
       }
 
       if (parts.length > 0) {
@@ -396,22 +453,23 @@ export class BinomoBot {
       const res = await fetch('http://localhost:3456/api/settings', { signal: AbortSignal.timeout(3000) });
       if (!res.ok) return;
       const settings = await res.json() as Record<string, string>;
-      const cfg = config as Record<string, unknown>;
-      const numKeys = ['entryValue', 'minSignalScore', 'expirationSeconds', 'candleTimeframeSeconds', 'martingaleLevels', 'martingaleMultiplier', 'cooldownSeconds', 'maxDailyTrades', 'maxDailyLoss', 'maxDailyProfit', 'sessionStartHour', 'sessionEndHour'];
-      const boolKeys = ['aiEnabled'];
-      const strKeys = ['asset', 'aiModel', 'aiEndpoint', 'aiApiKey'];
+      const numKeys = ['entryValue', 'minSignalScore', 'expirationSeconds', 'candleTimeframeSeconds', 'martingaleLevels', 'martingaleMultiplier', 'cooldownSeconds', 'maxDailyTrades', 'maxDailyLoss', 'maxDailyProfit', 'sessionStartHour', 'sessionEndHour'] as const;
+      const boolKeys = ['aiEnabled'] as const;
+      const strKeys = ['asset', 'aiModel', 'aiEndpoint', 'aiApiKey'] as const;
+      const partial: Partial<AppConfig> = {};
       for (const k of numKeys) {
         if (settings[k] != null) {
           const n = Number(settings[k]);
-          if (Number.isFinite(n)) cfg[k] = n;
+          if (Number.isFinite(n)) (partial as Record<string, number>)[k] = n;
         }
       }
       for (const k of boolKeys) {
-        if (settings[k] != null) cfg[k] = settings[k] === 'true' || settings[k] === '1';
+        if (settings[k] != null) (partial as Record<string, boolean>)[k] = settings[k] === 'true' || settings[k] === '1';
       }
       for (const k of strKeys) {
-        if (settings[k] != null && settings[k] !== '') cfg[k] = settings[k];
+        if (settings[k] != null && settings[k] !== '') (partial as Record<string, string>)[k] = settings[k];
       }
+      updateConfig(partial);
       log.info('Settings carregadas do banco.');
     } catch {
       // Sem API server — usa .env
@@ -439,13 +497,16 @@ export class BinomoBot {
       await this.runStrategyOptimization();
     }
 
-      let warmupMsg = false;
+    let warmupMsg = false;
     let lastProgressLog = 0;
     let warmupStart = Date.now();
     let sessionLoggedThisCycle = false;
     let lastSignalLog = 0;
     let lastStrategyCycle = 0;
     let lastPostTradeCycle = 0;
+    let lastRecoveryAttempt = 0;
+    let recoveryAttempts = 0;
+    let lastKnownCandleCount = 0;
     while (this.running) {
       await sleep(config.pollIntervalMs);
 
@@ -479,11 +540,29 @@ export class BinomoBot {
 
       const candleCount = this.feed.getCandles().length;
 
-      // Diagnostico: se passou muito tempo sem candles, tenta recuperar
-      if (candleCount === 0 && Date.now() - warmupStart > 60000) {
-        log.warn('Nenhum candle recebido em 60s. Tentando re-selecionar ativo...');
+      // Reseta o contador de recuperacao sempre que o feed avanca (novo candle produzido)
+      if (candleCount > lastKnownCandleCount) {
+        lastKnownCandleCount = candleCount;
+        recoveryAttempts = 0;
+      }
+
+      // Diagnostico: feed sem ticks novos ha muito tempo. IMPORTANTE: usa lastTickTime
+      // (nao candleCount===0), pois o feed pode travar depois de ja ter produzido
+      // alguns candles (ex: fica em "3/30" para sempre) — nesse caso candleCount nunca
+      // volta a 0 e a recuperacao antiga nunca disparava.
+      const msSinceLastTick = this.feed.lastTickTime !== null ? Date.now() - this.feed.lastTickTime : Date.now() - warmupStart;
+      if (msSinceLastTick > 60000 && Date.now() - lastRecoveryAttempt > 60000) {
+        lastRecoveryAttempt = Date.now();
+        recoveryAttempts++;
+        log.warn('Feed sem ticks novos ha %ss (candles=%d). Tentativa de recuperacao #%d...', (msSinceLastTick / 1000).toFixed(0), candleCount, recoveryAttempts);
+        if (recoveryAttempts >= 3) {
+          log.warn('Recuperacao leve falhou %d vezes seguidas. Recarregando a pagina...', recoveryAttempts);
+          await this.session.getPage().reload({ waitUntil: 'domcontentloaded', timeout: 30000 })
+            .then(() => sleep(3000))
+            .catch((err) => log.warn('Falha ao recarregar pagina: %s', (err as Error).message));
+          recoveryAttempts = 0;
+        }
         await this.session.selectAsset(config.asset).catch(() => {});
-        warmupStart = Date.now();
       }
 
       if (!this.feed.has(30)) {
@@ -530,11 +609,26 @@ export class BinomoBot {
       // Constrói contexto de tendência ANTES de chamar RiskManager
       const trendCtx = trendBias(candles);
       const indCtx = this.engine.getContext(candles);
+      // Estado de mercado unificado (usado no risk, no banco e no pos-trade)
+      const adxState = indCtx.adx >= 25 ? 'trending' : indCtx.adx < 20 ? 'ranging' : 'transition';
+      const volState = indCtx.atrNormalized > 0.001 ? 'volatile' : 'calm';
+      const marketState = `${adxState}_${trendCtx.direction}_${volState}`;
+
+      // Guarda opcional de padrao da banca: com alta taxa de "quase-ganhou",
+      // evita entradas em volatilidade morta (resultado decidido por um fio)
+      if (config.houseMinAtrNormalized > 0
+        && this.lastHouseNearMissRate > 40
+        && indCtx.atrNormalized < config.houseMinAtrNormalized) {
+        log.info('Bloqueado por padrao da banca: volatilidade morta (ATR %s < %s) com %d%% de quase-ganhos', indCtx.atrNormalized.toExponential(2), config.houseMinAtrNormalized.toExponential(2), this.lastHouseNearMissRate);
+        this.api.sendSignal(signal, null, false);
+        continue;
+      }
+
       const tradeDecision = this.risk.canTrade(signal.direction, signal.score, {
         trend: trendCtx,
         adx: indCtx.adx,
         patterns: signal.patterns,
-        marketState: `${indCtx.adx >= 25 ? 'trending' : indCtx.adx < 20 ? 'ranging' : 'transition'}_${trendCtx.direction}_${indCtx.atrNormalized > 0.001 ? 'volatile' : 'calm'}`,
+        marketState,
       });
       if (!tradeDecision.allowed) {
         log.info('Trade bloqueado: %s', tradeDecision.reason);
@@ -549,13 +643,6 @@ export class BinomoBot {
         indicators: indCtx,
       };
       const verdict = await this.ai.validate(signal, candles, aiContext);
-
-      // Captura estado do mercado no momento do trade
-      const ind = aiContext.indicators;
-      const adxState = ind.adx >= 25 ? 'trending' : ind.adx < 20 ? 'ranging' : 'transition';
-      const volState = ind.atrNormalized > 0.001 ? 'volatile' : 'calm';
-      const trendDir = aiContext.trend.direction;
-      const marketState = `${adxState}_${trendDir}_${volState}`;
       if (!verdict.approve) {
         log.info('IA BLOQUEOU: conf=%d risk=%s - %s', verdict.confidence, verdict.risk, verdict.reasoning);
         this.api.sendSignal(signal, verdict, false);
@@ -572,6 +659,32 @@ export class BinomoBot {
       const entryPrice = this.feed.lastPrice;
       log.info('Preço de entrada: %s', entryPrice !== null ? entryPrice.toFixed(8) : 'n/a');
 
+      // Snapshot da multidao no momento da entrada (padroes da banca).
+      // So vale se o sentimento for fresco (<120s) — leituras velhas viram null.
+      let sentimentCall: number | null = null;
+      let sentimentPut: number | null = null;
+      let crowdAlignment: string | null = null;
+      let bigBetsWithPct: number | null = null;
+      const sent = this.feed.sentiment;
+      if (sent && this.feed.sentimentTs !== null && Date.now() - this.feed.sentimentTs < 120000) {
+        const totalSent = sent.call + sent.put;
+        if (totalSent > 0) {
+          sentimentCall = sent.call;
+          sentimentPut = sent.put;
+          const callPct = sent.call / totalSent;
+          const majority = callPct >= 0.6 ? 'CALL' : callPct <= 0.4 ? 'PUT' : null;
+          crowdAlignment = majority === null ? 'neutral' : majority === signal.direction ? 'with_crowd' : 'against_crowd';
+        }
+      }
+      const deals = this.feed.recentDeals.slice(-10);
+      if (deals.length >= 5) {
+        const totalBets = deals.reduce((s, d) => s + d.bet, 0);
+        if (totalBets > 0) {
+          const withBets = deals.filter((d) => d.direction === signal.direction).reduce((s, d) => s + d.bet, 0);
+          bigBetsWithPct = withBets / totalBets;
+        }
+      }
+
       // Salva contexto do trade para analise pos-trade
       this.lastTradeContext = {
         patterns: signal.patterns,
@@ -579,6 +692,9 @@ export class BinomoBot {
         score: signal.score,
         direction: signal.direction,
         entryValue: tradeDecision.entryValue,
+        atr: indCtx.atr,
+        atrNormalized: indCtx.atrNormalized,
+        crowdAlignment,
       };
 
       const result = await this.trader!.execute(signal, tradeDecision.entryValue);
@@ -599,6 +715,18 @@ export class BinomoBot {
         aiConfidence: verdict.confidence,
         aiReasoning: verdict.reasoning,
         marketState,
+        sentimentCall,
+        sentimentPut,
+        crowdAlignment,
+        bigBetsWithPct,
+        indicators: {
+          rsi: indCtx.rsi,
+          adx: indCtx.adx,
+          atrNormalized: indCtx.atrNormalized,
+          macdHist: indCtx.macdHist,
+          stochK: indCtx.stochasticK,
+          bbPosition: indCtx.bbPosition,
+        },
       });
       const tradeId = typeof tradeResp === 'object' && tradeResp != null && 'tradeId' in tradeResp ? Number((tradeResp as { tradeId: number }).tradeId) : undefined;
 
@@ -610,6 +738,10 @@ export class BinomoBot {
    * Detecta WIN/LOSS comparando preço de entrada vs preço na expiração.
    * Método principal: não depende de saldo (que pode não chegar via WS).
    * CALL: WIN se exitPrice > entryPrice. PUT: WIN se exitPrice < entryPrice.
+   *
+   * LIMITAÇÃO CONHECIDA: isto é uma APROXIMAÇÃO via último tick recebido pelo WebSocket,
+   * não o resultado oficial retornado pela Binomo. Pode divergir em casos raros de
+   * spread/timing sub-segundo. Mantido assim por decisão consciente (ver plano de correções).
    */
   private async awaitResult(result: TradeResult, entryPrice: number | null, direction: 'CALL' | 'PUT', tradeId?: number): Promise<void> {
     if (result.status === 'ERROR') {
@@ -618,15 +750,20 @@ export class BinomoBot {
     }
     const waitMs = (config.expirationSeconds + 5) * 1000;
     log.info('Aguardando resultado (%ss)...', (waitMs / 1000).toFixed(1));
-    await sleep(waitMs);
+    // Sleep dividido: amostra o preco ~2s antes da expiracao (deteccao de virada final).
+    // A espera total permanece exp+5s.
+    const t2Ms = Math.max(0, (config.expirationSeconds - 2) * 1000);
+    await sleep(t2Ms);
+    const priceT2 = this.feed.lastPrice;
+    await sleep(waitMs - t2Ms);
 
     const exitPrice = this.feed.lastPrice;
+    const tieThreshold = 5e-8;
 
     if (entryPrice !== null && exitPrice !== null) {
       const diff = exitPrice - entryPrice;
       const absDiff = Math.abs(diff);
       // Tolerancia para empate: se diff for muito pequeno (< 0.5 tick), considera TIE
-      const tieThreshold = 5e-8;
       if (absDiff < tieThreshold) {
         log.info('Preco: entrada=%s saida=%s diff=%s -> TIE (empate)', entryPrice.toFixed(8), exitPrice.toFixed(8), diff.toFixed(8));
         result.status = 'TIE';
@@ -637,12 +774,32 @@ export class BinomoBot {
         result.status = isWin ? 'WIN' : 'LOSS';
         this.ai.learn(isWin ? 'win' : 'loss');
         if (isWin) {
-          result.payout = result.entryValue * 0.83; // payout estimado 83%
+          result.payout = result.entryValue * config.payoutPercent;
         }
       }
     } else {
       log.warn('Preço indisponível (entrada=%s saida=%s).', entryPrice, exitPrice);
       result.status = 'PENDING';
+    }
+
+    // === Padroes da banca: margem do resultado, quase-ganhou e virada final ===
+    let resultMargin: number | null = null;
+    let nearMiss: 0 | 1 | null = null;
+    let lateReversal: 0 | 1 | null = null;
+    if (entryPrice !== null && exitPrice !== null && (result.status === 'WIN' || result.status === 'LOSS')) {
+      const absDiff = Math.abs(exitPrice - entryPrice);
+      resultMargin = absDiff / entryPrice;
+      const atrEntry = this.lastTradeContext?.atr ?? 0;
+      if (atrEntry > 0) {
+        nearMiss = result.status === 'LOSS' && absDiff < config.houseNearMissAtr * atrEntry ? 1 : 0;
+      }
+      if (priceT2 !== null && Math.abs(priceT2 - entryPrice) >= tieThreshold) {
+        const winningAtT2 = direction === 'CALL' ? priceT2 > entryPrice : priceT2 < entryPrice;
+        lateReversal = winningAtT2 !== (result.status === 'WIN') ? 1 : 0;
+      }
+      if (nearMiss === 1 || lateReversal === 1) {
+        log.warn('Padrao banca: margem=%s quaseGanhou=%s viradaFinal=%s', resultMargin.toExponential(3), nearMiss === 1 ? 'SIM' : 'nao', lateReversal === 1 ? 'SIM' : 'nao');
+      }
     }
 
     // Tenta ler saldo também (para tracking de banca real)
@@ -680,6 +837,10 @@ export class BinomoBot {
         hour: new Date().getUTCHours(),
         score: ctx.score,
         patterns: ctx.patterns,
+        crowdAlignment: ctx.crowdAlignment,
+        nearMiss: nearMiss === 1,
+        lateReversal: lateReversal === 1,
+        resultMargin,
       });
     }
 
@@ -690,6 +851,11 @@ export class BinomoBot {
       status: result.status,
       payout: result.payout ?? null,
       exitPrice,
+      entryValue: result.entryValue,
+      resultMargin,
+      priceT2,
+      lateReversal,
+      nearMiss,
     });
 
     // Log periodico de performance da estrategia atual

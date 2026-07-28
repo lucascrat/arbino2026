@@ -55,6 +55,8 @@ export class AIStrategyManager {
     timestamp: number;
   }[] = [];
   private optimizationInterval = 25;
+  private readonly maxTradeBufferSize = 1000;
+  private totalTradeCount = 0;
   private lastOptimizationTradeCount = 0;
   private consecutiveLosses = 0;
   private readonly ai: { suggestStrategy: (analytics: string, currentStrategy: string, recentBatch: string) => Promise<StrategySuggestion> };
@@ -69,7 +71,7 @@ export class AIStrategyManager {
       martingaleLevels: config.martingaleLevels,
       martingaleMultiplier: config.martingaleMultiplier,
       cooldownSeconds: config.cooldownSeconds,
-      entryValue: Math.max(5, config.entryValue),
+      entryValue: config.entryValue,
     };
     log.info('StrategyManager iniciado: exp=%ds score=%d gales=%d', this.currentParams.expirationSeconds, this.currentParams.minSignalScore, this.currentParams.martingaleLevels);
   }
@@ -83,7 +85,7 @@ export class AIStrategyManager {
   }
 
   getTradeCount(): number {
-    return this.tradeBuffer.length;
+    return this.totalTradeCount;
   }
 
   getRecentTrades(n: number): typeof this.tradeBuffer {
@@ -92,6 +94,10 @@ export class AIStrategyManager {
 
   recordTrade(direction: Direction, win: boolean, martingaleLevel: number, entryValue: number, marketState: string, hour: number, score: number, patterns: string[]): void {
     this.tradeBuffer.push({ direction, win, martingaleLevel, entryValue, marketState, hour, score, patterns, timestamp: Date.now() });
+    if (this.tradeBuffer.length > this.maxTradeBufferSize) {
+      this.tradeBuffer = this.tradeBuffer.slice(-this.maxTradeBufferSize);
+    }
+    this.totalTradeCount++;
     if (win) this.consecutiveLosses = 0;
     else this.consecutiveLosses++;
   }
@@ -102,7 +108,7 @@ export class AIStrategyManager {
     const losses = trades.filter(t => !t.win).length;
     const total = wins + losses;
     const galeTrades = trades.filter(t => t.martingaleLevel > 0);
-    const netProfit = trades.reduce((acc, t) => acc + (t.win ? t.entryValue * 0.83 : -t.entryValue), 0);
+    const netProfit = trades.reduce((acc, t) => acc + (t.win ? t.entryValue * config.payoutPercent : -t.entryValue), 0);
     return {
       trades: total,
       wins,
@@ -115,8 +121,8 @@ export class AIStrategyManager {
   }
 
   shouldOptimize(): boolean {
-    const tradeDiff = this.tradeBuffer.length - this.lastOptimizationTradeCount;
-    return tradeDiff >= this.optimizationInterval && this.tradeBuffer.length >= this.optimizationInterval;
+    const tradeDiff = this.totalTradeCount - this.lastOptimizationTradeCount;
+    return tradeDiff >= this.optimizationInterval && this.totalTradeCount >= this.optimizationInterval;
   }
 
   private buildStrategyString(params: BotParams): string {
@@ -134,7 +140,7 @@ export class AIStrategyManager {
 
   async optimize(analyticsSummary: string): Promise<StrategyDecision | null> {
     if (!this.shouldOptimize()) return null;
-    this.lastOptimizationTradeCount = this.tradeBuffer.length;
+    this.lastOptimizationTradeCount = this.totalTradeCount;
 
     const perf = this.computePerf(this.tradeBuffer);
     const currentStr = this.buildStrategyString(this.currentParams);
@@ -153,7 +159,7 @@ export class AIStrategyManager {
       const newParams: BotParams = {
         ...this.currentParams,
         ...this.sanitizeChanges(suggestion.changes),
-        entryValue: 5,
+        entryValue: config.entryValue,
       };
 
       this.version++;

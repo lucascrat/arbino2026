@@ -22,7 +22,45 @@ function envStr(key: string, fallback: string): string {
   return v === undefined || v === '' ? fallback : v;
 }
 
-export const config = {
+export interface AppConfig {
+  email: string;
+  password: string;
+  mode: 'discovery' | 'trade' | 'backtest';
+  userDataDir: string;
+  expirationSeconds: number;
+  candleTimeframeSeconds: number;
+  entryValue: number;
+  asset: string;
+  maxDailyTrades: number;
+  maxDailyLoss: number;
+  maxDailyProfit: number;
+  martingaleLevels: number;
+  martingaleMultiplier: number;
+  cooldownSeconds: number;
+  minSignalScore: number;
+  sessionFilter: 'forex' | 'synthetic' | 'custom' | 'always';
+  sessionStartHour: number;
+  sessionEndHour: number;
+  pollIntervalMs: number;
+  recordCandles: boolean;
+  headless: boolean;
+  binomoUrl: string;
+  logsDir: string;
+  payoutPercent: number;
+  adminPassword: string;
+  houseNearMissAtr: number;
+  crowdContrarianMinSamples: number;
+  crowdContrarianEdgePts: number;
+  houseMinAtrNormalized: number;
+  aiEnabled: boolean;
+  aiEndpoint: string;
+  aiApiKey: string;
+  aiModel: string;
+  aiMinConfidence: number;
+  aiTimeoutMs: number;
+}
+
+export const config: AppConfig = {
   email: envStr('BINOMO_EMAIL', ''),
   password: envStr('BINOMO_PASSWORD', ''),
   mode: envStr('MODE', 'discovery') as 'discovery' | 'trade' | 'backtest',
@@ -46,12 +84,21 @@ export const config = {
   headless: envBool('HEADLESS', false),
   binomoUrl: 'https://binomo.com/trading',
   logsDir: path.resolve(root, envStr('DATA_DIR', 'logs')),
+  payoutPercent: envNum('PAYOUT_PERCENT', 0.83),
+  adminPassword: envStr('ADMIN_PASSWORD', ''),
+  houseNearMissAtr: envNum('HOUSE_NEAR_MISS_ATR', 0.15),
+  crowdContrarianMinSamples: envNum('CROWD_CONTRARIAN_MIN_SAMPLES', 30),
+  crowdContrarianEdgePts: envNum('CROWD_CONTRARIAN_EDGE_PTS', 10),
+  houseMinAtrNormalized: envNum('HOUSE_MIN_ATR_NORMALIZED', 0),
   aiEnabled: envBool('AI_ENABLED', false),
   aiEndpoint: envStr('AI_ENDPOINT', 'https://api.groq.com/openai/v1'),
   aiApiKey: envStr('AI_API_KEY', ''),
   aiModel: envStr('AI_MODEL', 'llama-3.3-70b-versatile'),
   aiMinConfidence: envNum('AI_MIN_CONFIDENCE', 30),
   aiTimeoutMs: envNum('AI_TIMEOUT_MS', 10000),
-} as const;
+};
 
-export type AppConfig = typeof config;
+/** Sobrescreve campos do config em runtime (usado pela IA de estrategia e por settings do banco). */
+export function updateConfig(partial: Partial<AppConfig>): void {
+  Object.assign(config, partial);
+}

@@ -94,9 +94,11 @@ O navegador abre, navega para `binomo.com/trading`. Faça login (manual ou via
 - Heurística automática de parsing de candles (pode já funcionar).
 
 **Com base nesses logs** você ajustará:
-- O parser em `src/data/CandleFeed.ts` (registre via `feed.registerParser()`).
-- Os seletores de botão em `src/execution/Trader.ts` (`callSelectors()` /
-  `putSelectors()`) e de expiração/valor.
+- O parser em `src/data/CandleFeed.ts` — os frames WebSocket são interceptados
+  em `BrowserSession.attachWebsocketInterceptor()` (`page.on('websocket')`) e
+  repassados para `feed.registerSocket()` / `feed.handleIncoming()`.
+- Os seletores de botão CALL/PUT em `src/execution/Trader.ts`
+  (`clickDirection()`) e de valor/expiração (`setAmount()` / `setExpiration()`).
 
 ### 2. Modo trade (após discovery + ajustes)
 
