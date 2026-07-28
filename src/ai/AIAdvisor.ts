@@ -91,7 +91,9 @@ export class AIAdvisor {
   }
 
   private isLocal(): boolean {
-    return this.endpoint.includes('localhost') || this.endpoint.includes('127.0.0.1');
+    return this.endpoint.startsWith('http://')
+      || this.endpoint.includes('localhost')
+      || this.endpoint.includes('127.0.0.1');
   }
 
   async validate(
